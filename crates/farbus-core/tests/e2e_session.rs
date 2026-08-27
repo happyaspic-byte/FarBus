@@ -91,8 +91,14 @@ async fn server_session_e2e_full_lifecycle() {
     let res = read_message(&mut client).await.unwrap();
     match res {
         Message::DeviceList(list) => {
-            assert_eq!(list.devices.len(), 3);
+            assert_eq!(list.devices.len(), 4);
             assert_eq!(list.devices[0].product, "USB Keyboard");
+            let composite = list
+                .devices
+                .iter()
+                .find(|d| d.bus_id == "1-4")
+                .expect("composite");
+            assert_eq!(composite.interfaces.len(), 2);
         }
         other => panic!("expected DeviceList, got {other:?}"),
     }

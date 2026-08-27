@@ -32,17 +32,21 @@ async fn usbip_devlist_import_and_interrupt_urb() {
     assert_eq!(u16::from_be_bytes([header[0], header[1]]), USBIP_VERSION);
     assert_eq!(u16::from_be_bytes([header[2], header[3]]), OP_REP_DEVLIST);
     let ndev = u32::from_be_bytes(header[8..12].try_into().unwrap());
-    assert_eq!(ndev, 3);
-    let mut rest = Vec::new();
-    for _ in 0..3 {
+    assert_eq!(ndev, 4);
+    let mut saw_composite = false;
+    for _ in 0..4 {
         let mut udev = [0u8; 312];
         client.read_exact(&mut udev).await.unwrap();
-        rest.extend_from_slice(&udev);
         let niface = usize::from(udev[311]);
         let mut ifaces = vec![0u8; niface.max(1) * 4];
         client.read_exact(&mut ifaces).await.unwrap();
-        rest.extend_from_slice(&ifaces);
+        if niface == 2 {
+            saw_composite = true;
+            assert_eq!(ifaces[0], 3);
+            assert_eq!(ifaces[4], 3);
+        }
     }
+    assert!(saw_composite);
 
     let mut import = Vec::new();
     import.extend_from_slice(&USBIP_VERSION.to_be_bytes());

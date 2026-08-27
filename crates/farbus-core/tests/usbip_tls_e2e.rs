@@ -88,9 +88,14 @@ async fn full_end_to_end_usbip_over_tls_proxy() {
         OP_REP_DEVLIST
     );
     let ndev = u32::from_be_bytes(devlist_hdr[8..12].try_into().unwrap());
-    assert_eq!(ndev, 3);
-    let mut devlist_body = vec![0u8; (312 + 4) * 3];
-    tool.read_exact(&mut devlist_body).await.unwrap();
+    assert_eq!(ndev, 4);
+    for _ in 0..4 {
+        let mut udev = [0u8; 312];
+        tool.read_exact(&mut udev).await.unwrap();
+        let niface = usize::from(udev[311]);
+        let mut ifaces = vec![0u8; niface.max(1) * 4];
+        tool.read_exact(&mut ifaces).await.unwrap();
+    }
 
     // Import Device 1-1.2 (Keyboard)
     let mut import = Vec::new();

@@ -16,3 +16,16 @@ fn simulated_mass_storage_exposes_bulk_endpoints() {
     assert!(disk.info.interfaces[0].endpoints.contains(&0x81));
     assert!(disk.info.interfaces[0].endpoints.contains(&0x02));
 }
+
+#[test]
+fn composite_receiver_reports_two_hid_interfaces() {
+    let composite = simulated_lab_devices()
+        .into_iter()
+        .find(|d| d.info.bus_id == "1-4")
+        .expect("composite receiver");
+    let header = encode_device_header(&composite);
+    assert_eq!(header[311], 2);
+    assert_eq!(composite.info.interfaces.len(), 2);
+    assert_eq!(composite.info.interfaces[0].endpoints, vec![0x81]);
+    assert_eq!(composite.info.interfaces[1].endpoints, vec![0x82]);
+}

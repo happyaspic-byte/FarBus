@@ -154,6 +154,35 @@ pub fn simulated_lab_devices() -> Vec<LocalDevice> {
             },
             backend: DeviceBackend::Emulated,
         },
+        LocalDevice {
+            info: DeviceInfo {
+                id: DeviceId(4),
+                bus_id: "1-4".into(),
+                vid: 0x046d,
+                pid: 0xc52b,
+                usb_class: 0,
+                speed: UsbSpeed::Full,
+                product: "Composite Receiver".into(),
+                exported: true,
+                interfaces: vec![
+                    UsbInterfaceInfo {
+                        interface_number: 0,
+                        interface_class: 3,
+                        interface_subclass: 1,
+                        interface_protocol: 1,
+                        endpoints: vec![0x81],
+                    },
+                    UsbInterfaceInfo {
+                        interface_number: 1,
+                        interface_class: 3,
+                        interface_subclass: 1,
+                        interface_protocol: 2,
+                        endpoints: vec![0x82],
+                    },
+                ],
+            },
+            backend: DeviceBackend::Emulated,
+        },
     ]
 }
 

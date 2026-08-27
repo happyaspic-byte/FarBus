@@ -41,7 +41,13 @@ async fn farbus_client_high_level_api_roundtrip() {
     client.pair(&pin, server_fp).await.unwrap();
 
     let devices = client.devices().await.unwrap();
-    assert_eq!(devices.devices.len(), 3);
+    assert_eq!(devices.devices.len(), 4);
+    let composite = devices
+        .devices
+        .iter()
+        .find(|d| d.bus_id == "1-4")
+        .expect("composite device");
+    assert_eq!(composite.interfaces.len(), 2);
 
     let attached = client.attach(DeviceId(2)).await.unwrap();
     assert_eq!(attached.device_id, DeviceId(2));
