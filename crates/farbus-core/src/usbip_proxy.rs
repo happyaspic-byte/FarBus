@@ -231,7 +231,16 @@ async fn serve_urbs(stream: TcpStream, device_id: DeviceId) -> std::io::Result<(
 ///
 /// Returns bind errors when port 3240 is already in use.
 pub async fn serve_usbip_loopback(devices: Vec<LocalDevice>, addr: &str) -> std::io::Result<()> {
-    let listener = TcpListener::bind(addr).await?;
+    let listen: std::net::SocketAddr = addr
+        .parse()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid address"))?;
+    if !listen.ip().is_loopback() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "USB/IP listener must use a loopback address",
+        ));
+    }
+    let listener = TcpListener::bind(listen).await?;
     loop {
         let (stream, _) = listener.accept().await?;
         let devices = devices.clone();

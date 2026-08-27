@@ -22,13 +22,15 @@ Secure, high-performance open-source USB sharing over IPv6 and IPv4.
 
 ## Quick Start
 
+Tagged releases publish SHA-256 checksummed Linux x86_64 and unsigned Windows x86_64 archives. The Windows archive contains user-space `farbus.exe` only; install the signed usbip-win2 driver separately.
+
 ### 1. Build and Run the Server (Linux/Pi)
 
-Physical USB devices are **not exported by default**. Pass `--export-all` only for devices you intend to share.
+Physical USB devices are **not exported by default**. Prefer exact `--export BUS-ID` entries. `--export-all` deliberately excludes HID, mass-storage, hubs, and composites containing those interfaces; export sensitive devices only by exact bus ID.
 
 ```bash
-cargo run --release -p farbus-server -- --export-all
-# or: scripts/install-linux.sh --systemd
+cargo run --release -p farbus-server -- --export 1-1.2
+# or: scripts/install-linux.sh --systemd, then edit the unit with exact --export entries
 ```
 
 Output:
@@ -62,7 +64,7 @@ cargo run --release -p farbus-client -- devices <server-fingerprint>
 cargo run --release -p farbus-client -- attach <server-fingerprint> 1
 ```
 
-Windows setup, including usbip-win2, is documented in [`docs/WINDOWS.md`](docs/WINDOWS.md). HID devices can inject input; export them only when you trust the client.
+Windows setup, including the unsigned per-user FarBus ZIP installer and separately installed usbip-win2 driver, is documented in [`docs/WINDOWS.md`](docs/WINDOWS.md). HID devices can inject input; export them only when you trust the client.
 
 ### 4. Connect with Standard USB/IP (Windows / Linux)
 

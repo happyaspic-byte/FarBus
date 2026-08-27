@@ -3,7 +3,7 @@ use farbus_core::{
     discovery, make_server_config, scan_host_usb, serve_session, serve_usbip_loopback,
     simulated_lab_devices, ServerState,
 };
-use farbus_server::Cli;
+use farbus_server::{apply_export_policy, Cli};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
@@ -19,18 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("No physical USB devices found; using simulated lab devices.");
         devices = simulated_lab_devices();
     }
-    if cli.export_all {
-        for device in &mut devices {
-            device.info.exported = true;
-        }
-    }
-    if !cli.export.is_empty() {
-        for device in &mut devices {
-            if cli.export.iter().any(|bus| bus == &device.info.bus_id) {
-                device.info.exported = true;
-            }
-        }
-    }
+    apply_export_policy(&mut devices, cli.export_all, &cli.export)?;
     let exported = devices.iter().filter(|d| d.info.exported).count();
 
     let hostname = hostname::get().map_or_else(
@@ -52,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" Pairing PIN : {pin}  (valid for 2 minutes)");
     println!(" Listening   : {}", cli.listen);
     println!(" Discovered  : {} devices", state.devices.len());
-    println!(" Exported    : {exported} devices (use --export-all to share physical USB)");
+    println!(" Exported    : {exported} devices (prefer exact --export BUS-ID selectors)");
     println!("==================================================");
 
     let listener = TcpListener::bind(cli.listen).await?;

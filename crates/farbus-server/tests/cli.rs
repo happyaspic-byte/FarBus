@@ -24,6 +24,19 @@ fn parses_custom_usbip_listener() {
 }
 
 #[test]
+fn rejects_non_loopback_usbip_listener() {
+    for addr in ["0.0.0.0:3240", "[::]:3240", "192.168.1.10:3240"] {
+        assert!(Cli::try_parse_from(["farbus-server", "--usbip-listen", addr]).is_err());
+    }
+}
+
+#[test]
+fn accepts_ipv6_loopback_usbip_listener() {
+    let cli = Cli::try_parse_from(["farbus-server", "--usbip-listen", "[::1]:3240"]).unwrap();
+    assert!(cli.usbip_listen.ip().is_loopback());
+}
+
+#[test]
 fn export_all_is_off_by_default() {
     let cli = Cli::try_parse_from(["farbus-server"]).unwrap();
     assert!(!cli.export_all);

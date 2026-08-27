@@ -11,6 +11,19 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 
+fn ensure_loopback(listen: &str) -> std::io::Result<()> {
+    let addr: std::net::SocketAddr = listen
+        .parse()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid address"))?;
+    if !addr.ip().is_loopback() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "USB/IP listener must use a loopback address",
+        ));
+    }
+    Ok(())
+}
+
 /// Serves USB/IP 1.1 on loopback and forwards URBs concurrently over an authenticated `FarBus` session.
 ///
 /// # Errors
@@ -21,6 +34,7 @@ pub async fn serve_usbip_forward(
     devices: Vec<LocalDevice>,
     client: Arc<Mutex<FarBusClient>>,
 ) -> std::io::Result<()> {
+    ensure_loopback(listen)?;
     let listener = TcpListener::bind(listen).await?;
     loop {
         let (stream, _) = listener.accept().await?;

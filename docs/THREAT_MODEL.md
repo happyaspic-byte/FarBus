@@ -22,13 +22,13 @@
 - Device list, attach, detach, and URB require a verified bearer token bound to the TLS session principal. Hello fingerprints alone cannot list or detach.
 - 256-bit random bearer tokens stored with mode `0600` on Unix; session directory mode `0700`.
 - USB/IP `transfer_buffer_length` is rejected above 65,536 bytes before allocation.
-- Physical devices default to `exported = false`; `--export-all` is explicit opt-in.
-- HID devices are visible in the list but cannot attach unless explicitly exported.
+- Physical devices default to `exported = false`. Broad `--export-all` excludes HID, mass-storage, hubs, and composite devices containing those interfaces.
+- Sensitive devices require an exact repeated `--export BUS-ID`; unmatched selectors fail startup.
 - Exclusive per-device leases reject a second client.
 - Protocol frames cap payloads at 65,536 bytes and reject unknown versions, invalid enum values, truncated frames, malformed UTF-8, and trailing payload bytes.
 - Each TLS session permits at most 64 concurrent in-flight URBs; additional reads receive backpressure until a slot completes.
 - USB/IP management structures use fixed sizes; device count and URB payloads are bounded.
-- Plain USB/IP listeners bind to `127.0.0.1` only. No plaintext remote mode exists.
+- Plain USB/IP listeners are restricted to IPv4/IPv6 loopback addresses by CLI validation and core bind checks. No plaintext remote mode exists.
 - Rust workspace forbids `unsafe` code. Native `libusb` is isolated behind `rusb`.
 
 ## Residual Risks

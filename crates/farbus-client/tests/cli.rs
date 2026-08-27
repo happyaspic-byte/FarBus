@@ -49,6 +49,40 @@ fn parses_custom_usbip_listen_address() {
 }
 
 #[test]
+fn rejects_non_loopback_usbip_listener() {
+    let fingerprint = "01".repeat(32);
+    for addr in ["0.0.0.0:3240", "[::]:3240", "192.168.1.10:3240"] {
+        assert!(Cli::try_parse_from([
+            "farbus",
+            "attach",
+            &fingerprint,
+            "42",
+            "--usbip-listen",
+            addr,
+        ])
+        .is_err());
+    }
+}
+
+#[test]
+fn accepts_ipv6_loopback_usbip_listener() {
+    let fingerprint = "01".repeat(32);
+    let cli = Cli::try_parse_from([
+        "farbus",
+        "attach",
+        &fingerprint,
+        "42",
+        "--usbip-listen",
+        "[::1]:3240",
+    ])
+    .unwrap();
+    assert!(matches!(
+        cli.command,
+        Command::Attach { usbip_listen, .. } if usbip_listen.ip().is_loopback()
+    ));
+}
+
+#[test]
 fn parses_diagnose_command() {
     let fingerprint = "22".repeat(32);
     let cli = Cli::try_parse_from(["farbus", "diagnose", &fingerprint]).unwrap();

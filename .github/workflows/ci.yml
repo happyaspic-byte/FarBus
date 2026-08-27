@@ -21,6 +21,11 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --release
+      - name: Smoke-test Linux installer
+        run: |
+          PREFIX="$RUNNER_TEMP/farbus" scripts/install-linux.sh
+          "$RUNNER_TEMP/farbus/bin/farbus" --help
+          "$RUNNER_TEMP/farbus/bin/farbus-server" --help
 
   windows:
     name: Windows build and test
@@ -30,6 +35,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --release
+      - name: Smoke-test per-user installer
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP "FarBus"
+          ./scripts/install-windows.ps1 -Binary ./target/release/farbus.exe -InstallDir $installDir -NoPath
+          & "$installDir/farbus.exe" --help
+          ./scripts/install-windows.ps1 -Binary ./target/release/farbus.exe -InstallDir $installDir -NoPath
+          ./scripts/install-windows.ps1 -InstallDir $installDir -NoPath -Uninstall
+          if (Test-Path "$installDir/farbus.exe") { throw "uninstall failed" }
+      - name: Stage unsigned Windows package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/FarBus-Windows-x64 | Out-Null
+          Copy-Item target/release/farbus.exe,scripts/install-windows.ps1,docs/WINDOWS.md,LICENSE-MIT,LICENSE-APACHE dist/FarBus-Windows-x64/
+          Compress-Archive -Path dist/FarBus-Windows-x64/* -DestinationPath dist/FarBus-Windows-x64-unsigned.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FarBus-Windows-x64-unsigned
+          path: dist/FarBus-Windows-x64-unsigned.zip
 
   audit:
     name: Dependency audit

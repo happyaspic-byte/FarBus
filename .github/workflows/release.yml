@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    name: Linux x86_64 package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace --all-features
+      - run: cargo build --workspace --release
+      - name: Stage package
+        run: |
+          mkdir -p dist/FarBus-Linux-x86_64
+          cp target/release/farbus target/release/farbus-server target/release/farbus-bench dist/FarBus-Linux-x86_64/
+          cp scripts/install-linux.sh README.md LICENSE-MIT LICENSE-APACHE dist/FarBus-Linux-x86_64/
+          dist/FarBus-Linux-x86_64/farbus --help >/dev/null
+          dist/FarBus-Linux-x86_64/farbus-server --help >/dev/null
+          tar -C dist -czf dist/FarBus-Linux-x86_64.tar.gz FarBus-Linux-x86_64
+          sha256sum dist/FarBus-Linux-x86_64.tar.gz > dist/FarBus-Linux-x86_64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FarBus-Linux-x86_64
+          path: |
+            dist/FarBus-Linux-x86_64.tar.gz
+            dist/FarBus-Linux-x86_64.tar.gz.sha256
+
+  windows:
+    name: Windows x86_64 package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace --all-features
+      - run: cargo build --workspace --release
+      - name: Stage unsigned package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/FarBus-Windows-x64 | Out-Null
+          Copy-Item target/release/farbus.exe,scripts/install-windows.ps1,docs/WINDOWS.md,README.md,LICENSE-MIT,LICENSE-APACHE dist/FarBus-Windows-x64/
+          & dist/FarBus-Windows-x64/farbus.exe --help | Out-Null
+          Compress-Archive -Path dist/FarBus-Windows-x64/* -DestinationPath dist/FarBus-Windows-x64-unsigned.zip
+          (Get-FileHash dist/FarBus-Windows-x64-unsigned.zip -Algorithm SHA256).Hash.ToLower() + "  FarBus-Windows-x64-unsigned.zip" | Set-Content -NoNewline dist/FarBus-Windows-x64-unsigned.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FarBus-Windows-x64-unsigned
+          path: |
+            dist/FarBus-Windows-x64-unsigned.zip
+            dist/FarBus-Windows-x64-unsigned.zip.sha256
+
+  publish:
+    name: Publish GitHub release
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release-assets/FarBus-Linux-x86_64.tar.gz
+            release-assets/FarBus-Linux-x86_64.tar.gz.sha256
+            release-assets/FarBus-Windows-x64-unsigned.zip
+            release-assets/FarBus-Windows-x64-unsigned.zip.sha256
+          body: |
+            FarBus Linux server/client binaries and an unsigned Windows user-space client package.
+
+            Windows requires separately installed signed usbip-win2. FarBus does not ship or sign a kernel driver. Verify the SHA-256 checksum before installation.
