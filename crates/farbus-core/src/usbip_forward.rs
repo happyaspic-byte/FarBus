@@ -1,66 +1,54 @@
-use crate::urb::complete_urb;
+use crate::client::FarBusClient;
 use crate::usb::LocalDevice;
+use crate::usbip_proxy::encode_device_header;
 use farbus_protocol::usbip::{
     UsbipCmdSubmit, UsbipRetSubmit, OP_REP_DEVLIST, OP_REP_IMPORT, OP_REQ_DEVLIST, OP_REQ_IMPORT,
     USBIP_VERSION,
 };
 use farbus_protocol::{DeviceId, TransferType, UrbSubmit};
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
 
-fn padded(src: &str, n: usize) -> Vec<u8> {
-    let mut out = vec![0u8; n];
-    let bytes = src.as_bytes();
-    let copy = bytes.len().min(n.saturating_sub(1));
-    out[..copy].copy_from_slice(&bytes[..copy]);
-    out
-}
-
-/// Encodes a 312-byte `usbip_usb_device` structure.
-#[must_use]
-pub fn encode_device_header(device: &LocalDevice) -> Vec<u8> {
-    let mut out = Vec::with_capacity(312);
-    out.extend_from_slice(&padded(
-        &format!("/sys/bus/usb/devices/{}", device.info.bus_id),
-        256,
-    ));
-    out.extend_from_slice(&padded(&device.info.bus_id, 32));
-    let busnum = device
-        .info
-        .bus_id
-        .split('-')
-        .next()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(1);
-    out.extend_from_slice(&busnum.to_be_bytes());
-    out.extend_from_slice(&device.info.id.0.to_be_bytes());
-    let speed = match device.info.speed {
-        farbus_protocol::UsbSpeed::Low => 1u32,
-        farbus_protocol::UsbSpeed::Full => 2,
-        farbus_protocol::UsbSpeed::High => 3,
-        farbus_protocol::UsbSpeed::Super => 5,
-    };
-    out.extend_from_slice(&speed.to_be_bytes());
-    out.extend_from_slice(&device.info.vid.to_be_bytes());
-    out.extend_from_slice(&device.info.pid.to_be_bytes());
-    out.extend_from_slice(&0x0100u16.to_be_bytes());
-    out.push(device.info.usb_class);
-    out.push(0);
-    out.push(0);
-    out.push(1);
-    out.push(1);
-    out.push(1);
-    out
-}
-
-/// Handles one USB/IP 1.1 client connection.
+/// Serves USB/IP 1.1 on loopback and forwards URBs over an authenticated `FarBus` session.
 ///
 /// # Errors
 ///
-/// Returns I/O errors when the peer disconnects mid-frame.
-pub async fn handle_client(
+/// Returns bind or I/O errors.
+pub async fn serve_usbip_forward(
+    listen: &str,
+    devices: Vec<LocalDevice>,
+    client: Arc<Mutex<FarBusClient>>,
+) -> std::io::Result<()> {
+    let listener = TcpListener::bind(listen).await?;
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let devices = devices.clone();
+        let client = Arc::clone(&client);
+        tokio::spawn(async move {
+            let _ = handle_forward(stream, devices, client).await;
+        });
+    }
+}
+
+/// Handles a single forwarding connection.
+///
+/// # Errors
+///
+/// Returns I/O errors when the peer disconnects.
+pub async fn handle_forward_for_test(
+    stream: TcpStream,
+    devices: Vec<LocalDevice>,
+    client: Arc<Mutex<FarBusClient>>,
+) -> std::io::Result<()> {
+    handle_forward(stream, devices, client).await
+}
+
+async fn handle_forward(
     mut stream: TcpStream,
     devices: Vec<LocalDevice>,
+    client: Arc<Mutex<FarBusClient>>,
 ) -> std::io::Result<()> {
     loop {
         let mut header = [0u8; 8];
@@ -92,15 +80,15 @@ pub async fn handle_client(
                     .unwrap_or("")
                     .trim_end_matches('\0')
                     .to_string();
-                let found = devices.iter().find(|d| d.info.bus_id == requested);
+                let found = devices.iter().find(|d| d.info.bus_id == requested).cloned();
                 let mut reply = Vec::new();
                 reply.extend_from_slice(&USBIP_VERSION.to_be_bytes());
                 reply.extend_from_slice(&OP_REP_IMPORT.to_be_bytes());
                 if let Some(device) = found {
                     reply.extend_from_slice(&0u32.to_be_bytes());
-                    reply.extend_from_slice(&encode_device_header(device));
+                    reply.extend_from_slice(&encode_device_header(&device));
                     stream.write_all(&reply).await?;
-                    serve_urbs(&mut stream, device.info.id).await?;
+                    forward_urbs(&mut stream, device.info.id, &client).await?;
                 } else {
                     reply.extend_from_slice(&4u32.to_be_bytes());
                     stream.write_all(&reply).await?;
@@ -112,7 +100,11 @@ pub async fn handle_client(
     Ok(())
 }
 
-async fn serve_urbs(stream: &mut TcpStream, device_id: DeviceId) -> std::io::Result<()> {
+async fn forward_urbs(
+    stream: &mut TcpStream,
+    device_id: DeviceId,
+    client: &Arc<Mutex<FarBusClient>>,
+) -> std::io::Result<()> {
     loop {
         let mut header = [0u8; 48];
         if stream.read_exact(&mut header).await.is_err() {
@@ -133,13 +125,19 @@ async fn serve_urbs(stream: &mut TcpStream, device_id: DeviceId) -> std::io::Res
         } else if cmd.ep == 0 {
             data = cmd.setup.to_vec();
         }
-        let complete = complete_urb(&UrbSubmit {
-            seq: cmd.seqnum,
-            device_id,
-            endpoint: u8::try_from(cmd.ep).unwrap_or(0),
-            transfer,
-            data,
-        });
+        let complete = {
+            let mut farbus = client.lock().await;
+            farbus
+                .urb(
+                    device_id,
+                    cmd.seqnum,
+                    u8::try_from(cmd.ep).unwrap_or(0),
+                    transfer,
+                    data,
+                )
+                .await
+                .map_err(|err| std::io::Error::other(err.to_string()))?
+        };
         let ret = UsbipRetSubmit {
             seqnum: cmd.seqnum,
             devid: cmd.devid,
@@ -160,18 +158,6 @@ async fn serve_urbs(stream: &mut TcpStream, device_id: DeviceId) -> std::io::Res
     Ok(())
 }
 
-/// Starts a loopback USB/IP 1.1 server for Windows/Linux VHCI clients.
-///
-/// # Errors
-///
-/// Returns bind errors when port 3240 is already in use.
-pub async fn serve_usbip_loopback(devices: Vec<LocalDevice>, addr: &str) -> std::io::Result<()> {
-    let listener = TcpListener::bind(addr).await?;
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let devices = devices.clone();
-        tokio::spawn(async move {
-            let _ = handle_client(stream, devices).await;
-        });
-    }
-}
+// Keep unused import warning-free if UrbSubmit is not needed here.
+#[allow(dead_code)]
+fn _urb_ty(_: UrbSubmit) {}
