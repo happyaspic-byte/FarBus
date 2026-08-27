@@ -40,7 +40,7 @@ pub fn scan_libusb() -> Vec<LocalDevice> {
                 usb_class: desc.class_code(),
                 speed,
                 product,
-                exported: true,
+                exported: false,
             },
         });
         id += 1;

@@ -39,7 +39,7 @@ pub fn parse_sysfs_device(dir: &Path, id: DeviceId) -> Option<LocalDevice> {
             usb_class,
             speed,
             product,
-            exported: true,
+            exported: false,
         },
     })
 }

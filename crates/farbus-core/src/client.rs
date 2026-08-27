@@ -151,7 +151,7 @@ impl FarBusClient {
         .await?;
         match read_message(&mut self.stream).await? {
             Message::AttachResponse(res) if res.success => Ok(res),
-            Message::AttachResponse(_) => Err(ClientError::AttachRejected),
+            Message::AttachResponse(_) | Message::Error { .. } => Err(ClientError::AttachRejected),
             _ => Err(ClientError::Unexpected),
         }
     }

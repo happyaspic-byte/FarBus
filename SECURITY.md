@@ -21,4 +21,4 @@ You should receive an initial response within seven days. No bounty is currently
 
 ## Current warning
 
-M0 does not forward USB traffic and has no production network listener. Future prereleases remain unsuitable for exposure to untrusted networks until their release notes explicitly state that TLS pairing and security review are complete.
+FarBus now forwards USB traffic over TLS 1.3, but remains pre-1.0. Restrict deployments to trusted LANs until independent security review and signed installers are complete. See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for controls and residual risks.

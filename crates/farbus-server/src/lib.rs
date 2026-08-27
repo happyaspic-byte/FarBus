@@ -7,4 +7,7 @@ pub struct Cli {
     /// Listen address; the default IPv6 socket also accepts IPv4 on supported systems.
     #[arg(long, default_value = "[::]:7420")]
     pub listen: SocketAddr,
+    /// Export every discovered USB device. Off by default.
+    #[arg(long, default_value_t = false)]
+    pub export_all: bool,
 }

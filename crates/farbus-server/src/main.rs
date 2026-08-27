@@ -16,9 +16,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut devices = scan_host_usb();
     if devices.is_empty() {
-        println!("No physical USB devices found in sysfs; using simulated lab devices.");
+        println!("No physical USB devices found; using simulated lab devices.");
         devices = simulated_lab_devices();
     }
+    if cli.export_all {
+        for device in &mut devices {
+            device.info.exported = true;
+        }
+    }
+    let exported = devices.iter().filter(|d| d.info.exported).count();
 
     let hostname = hostname::get().map_or_else(
         |_| "farbus-server".into(),
@@ -38,7 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" Fingerprint : {server_fp}");
     println!(" Pairing PIN : {pin}  (valid for 2 minutes)");
     println!(" Listening   : {}", cli.listen);
-    println!(" Exported    : {} devices", state.devices.len());
+    println!(" Discovered  : {} devices", state.devices.len());
+    println!(" Exported    : {exported} devices (use --export-all to share physical USB)");
     println!("==================================================");
 
     let listener = TcpListener::bind(cli.listen).await?;

@@ -21,8 +21,11 @@ Secure, high-performance open-source USB sharing over IPv6 and IPv4.
 
 ### 1. Build and Run the Server (Linux/Pi)
 
+Physical USB devices are **not exported by default**. Pass `--export-all` only for devices you intend to share.
+
 ```bash
-cargo run --release -p farbus-server
+cargo run --release -p farbus-server -- --export-all
+# or: scripts/install-linux.sh --systemd
 ```
 
 Output:
@@ -55,6 +58,8 @@ cargo run --release -p farbus-client -- devices <server-fingerprint>
 # Attach device #1
 cargo run --release -p farbus-client -- attach <server-fingerprint> 1
 ```
+
+Windows setup, including usbip-win2, is documented in [`docs/WINDOWS.md`](docs/WINDOWS.md). HID devices can inject input; export them only when you trust the client.
 
 ### 4. Connect with Standard USB/IP (Windows / Linux)
 

@@ -38,7 +38,12 @@ impl ServerState {
     #[must_use]
     pub fn device_list(&self) -> DeviceList {
         DeviceList {
-            devices: self.devices.iter().map(|d| d.info.clone()).collect(),
+            devices: self
+                .devices
+                .iter()
+                .filter(|d| d.info.exported)
+                .map(|d| d.info.clone())
+                .collect(),
         }
     }
 }
@@ -120,7 +125,7 @@ where
                 let device = state
                     .devices
                     .iter()
-                    .find(|d| d.info.id == req.device_id)
+                    .find(|d| d.info.id == req.device_id && d.info.exported)
                     .cloned();
                 let Some(device) = device else {
                     write_message(
@@ -133,6 +138,12 @@ where
                     .await?;
                     continue;
                 };
+                if device.info.usb_class == 3 {
+                    eprintln!(
+                        "warning: exporting HID device {} ({}); it can inject input",
+                        device.info.bus_id, device.info.product
+                    );
+                }
                 let success = state
                     .leases
                     .lock()

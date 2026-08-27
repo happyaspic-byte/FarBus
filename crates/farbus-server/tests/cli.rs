@@ -16,3 +16,11 @@ fn accepts_explicit_ipv4_listener() {
     let cli = Cli::try_parse_from(["farbus-server", "--listen", "0.0.0.0:9000"]).unwrap();
     assert_eq!(cli.listen.to_string(), "0.0.0.0:9000");
 }
+
+#[test]
+fn export_all_is_off_by_default() {
+    let cli = Cli::try_parse_from(["farbus-server"]).unwrap();
+    assert!(!cli.export_all);
+    let cli = Cli::try_parse_from(["farbus-server", "--export-all"]).unwrap();
+    assert!(cli.export_all);
+}

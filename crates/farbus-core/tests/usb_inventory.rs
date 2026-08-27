@@ -23,6 +23,7 @@ fn parses_linux_sysfs_usb_device() {
     assert_eq!(parsed.info.usb_class, 3);
     assert_eq!(parsed.info.speed, UsbSpeed::High);
     assert_eq!(parsed.info.product, "USB Keyboard");
+    assert!(!parsed.info.exported);
     let _ = fs::remove_dir_all(&temp);
 }
 

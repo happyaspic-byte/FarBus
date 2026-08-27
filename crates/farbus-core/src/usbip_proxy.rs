@@ -62,6 +62,7 @@ pub async fn handle_client(
     mut stream: TcpStream,
     devices: Vec<LocalDevice>,
 ) -> std::io::Result<()> {
+    let devices: Vec<_> = devices.into_iter().filter(|d| d.info.exported).collect();
     loop {
         let mut header = [0u8; 8];
         if stream.read_exact(&mut header).await.is_err() {

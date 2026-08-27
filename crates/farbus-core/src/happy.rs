@@ -3,6 +3,7 @@ use crate::fingerprint::PeerFingerprint;
 use crate::path::connection_order;
 use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
 
 /// Races IPv6-first candidate addresses with a 250 ms stagger.
@@ -21,10 +22,10 @@ pub async fn happy_eyeballs_connect(
             "no server addresses",
         )));
     }
-    let mut tasks = Vec::new();
+    let mut set = JoinSet::new();
     for (i, addr) in ordered.into_iter().enumerate() {
         let delay = Duration::from_millis(250 * u64::try_from(i).unwrap_or(0));
-        tasks.push(tokio::spawn(async move {
+        set.spawn(async move {
             if !delay.is_zero() {
                 sleep(delay).await;
             }
@@ -33,12 +34,15 @@ pub async fn happy_eyeballs_connect(
                 FarBusClient::connect(addr, expected),
             )
             .await
-        }));
+        });
     }
     let mut last = None;
-    for task in tasks {
-        match task.await {
-            Ok(Ok(Ok(client))) => return Ok(client),
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(Ok(Ok(client))) => {
+                set.abort_all();
+                return Ok(client);
+            }
             Ok(Ok(Err(err))) => last = Some(err),
             Ok(Err(_)) => {
                 last = Some(ClientError::Io(std::io::Error::new(
