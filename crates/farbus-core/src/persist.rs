@@ -74,13 +74,27 @@ fn save_identity(
     }
     let cert_path = dir.join("cert.der");
     let key_path = dir.join("key.der");
-    fs::write(&cert_path, cert.as_ref())?;
-    fs::write(&key_path, key.secret_der())?;
+    write_private_atomic(&key_path, key.secret_der(), 0o600)?;
+    write_private_atomic(&cert_path, cert.as_ref(), 0o644)?;
+    Ok(())
+}
+
+fn write_private_atomic(path: &std::path::Path, data: &[u8], mode: u32) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600));
-        let _ = fs::set_permissions(&cert_path, fs::Permissions::from_mode(0o644));
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true).mode(mode);
+        let mut file = opts.open(&tmp)?;
+        file.write_all(data)?;
+        file.sync_all()?;
     }
+    #[cfg(not(unix))]
+    {
+        fs::write(&tmp, data)?;
+    }
+    fs::rename(&tmp, path)?;
     Ok(())
 }

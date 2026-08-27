@@ -18,9 +18,12 @@
 ## Experimental
 
 - Isochronous devices (webcams, USB audio)
+- Composite USB devices with more than one interface (currently claimed as interface 0)
 - USB 3 UASP storage
 - WAN / high-latency paths
 - Timing-sensitive game controllers and security dongles
+
+Loopback bulk benchmarks measure serialized URB round-trips over one TLS session. They are a transport ceiling, not physical USB or pipelined USB/IP throughput.
 
 ## Not supported
 

@@ -30,20 +30,30 @@ pub fn save_session(session: &StoredSession) -> std::io::Result<()> {
     }
     let content = format!("{}\n{}\n{}\n", session.addr, session.fingerprint, token_hex);
     let session_path = dir.join(format!("{}.session", session.fingerprint));
-    fs::write(&session_path, content)?;
-    restrict_file_mode(&session_path);
+    write_private_atomic(&session_path, content.as_bytes())?;
     let latest = dir.join("latest");
-    fs::write(&latest, session.fingerprint.to_string())?;
-    restrict_file_mode(&latest);
+    write_private_atomic(&latest, session.fingerprint.to_string().as_bytes())?;
     Ok(())
 }
 
-fn restrict_file_mode(path: &std::path::Path) {
+fn write_private_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true).mode(0o600);
+        let mut file = opts.open(&tmp)?;
+        file.write_all(data)?;
+        file.sync_all()?;
     }
+    #[cfg(not(unix))]
+    {
+        fs::write(&tmp, data)?;
+    }
+    fs::rename(&tmp, path)?;
+    Ok(())
 }
 
 #[must_use]

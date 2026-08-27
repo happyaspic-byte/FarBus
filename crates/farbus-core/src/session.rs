@@ -276,6 +276,22 @@ where
                     .await?;
                     continue;
                 };
+                let tokens = state.tokens.lock().await;
+                let active = tokens
+                    .values()
+                    .any(|(owner, expires)| *owner == peer && Instant::now() <= *expires);
+                drop(tokens);
+                if !active {
+                    write_message(
+                        stream,
+                        &Message::Error {
+                            code: ErrorCode::Unauthorized,
+                            detail: "expired token".into(),
+                        },
+                    )
+                    .await?;
+                    continue;
+                }
                 if state.leases.lock().await.owner(urb.device_id) != Some(peer) {
                     write_message(
                         stream,

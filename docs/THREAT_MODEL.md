@@ -37,6 +37,7 @@
 - PIN pairing authenticates physical possession/display access, not a centralized user identity.
 - Isochronous transfers remain unsupported by the physical backend.
 - USB/IP `UNLINK` is acknowledged, but cancellation of an already-running synchronous libusb operation is best-effort.
+- Session and identity files are written to a mode-restricted temp file and renamed into place. Windows does not use DPAPI.
 - Network latency can violate USB device timing expectations.
 
 ## Out of Scope
