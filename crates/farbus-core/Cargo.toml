@@ -10,6 +10,13 @@ description = "FarBus shared state machines and identity"
 [dependencies]
 farbus-protocol = { path = "../farbus-protocol" }
 thiserror = "2"
+sha2 = "0.10"
+rand = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "sync"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rcgen = "0.13"
+rustls-pki-types = "1"
 
 [lints]
 workspace = true

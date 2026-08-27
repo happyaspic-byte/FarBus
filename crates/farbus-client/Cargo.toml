@@ -11,6 +11,9 @@ description = "FarBus USB import client"
 farbus-core = { path = "../farbus-core" }
 farbus-protocol = { path = "../farbus-protocol" }
 clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rpassword = "7"
 
 [lints]
 workspace = true

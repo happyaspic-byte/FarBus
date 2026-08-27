@@ -1,11 +1,13 @@
 //! `FarBus` control-plane framing. Fail closed on unknown versions and oversized frames.
 
+pub mod usbip;
+
 use thiserror::Error as ThisError;
 
 pub const VERSION: u8 = 1;
 pub const MAX_PAYLOAD: usize = 65_536;
 const MAGIC: &[u8; 4] = b"FARB";
-const HEADER_LEN: usize = 10;
+pub const HEADER_LEN: usize = 10;
 const MAX_U8_STR: usize = 255;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -17,6 +19,14 @@ pub enum UsbSpeed {
     Full,
     High,
     Super,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferType {
+    Control,
+    Interrupt,
+    Bulk,
+    Isochronous,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +43,50 @@ pub struct Hello {
     pub protocol_max: u8,
     pub fingerprint: [u8; 32],
     pub hostname: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairRequest {
+    pub client_fingerprint: [u8; 32],
+    pub pin_hash: [u8; 32],
+    pub client_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairResponse {
+    pub success: bool,
+    pub server_fingerprint: [u8; 32],
+    pub auth_token: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachRequest {
+    pub device_id: DeviceId,
+    pub auth_token: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachResponse {
+    pub device_id: DeviceId,
+    pub success: bool,
+    pub usbip_port: u16,
+    pub bus_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrbSubmit {
+    pub seq: u32,
+    pub device_id: DeviceId,
+    pub endpoint: u8,
+    pub transfer: TransferType,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrbComplete {
+    pub seq: u32,
+    pub status: i32,
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +112,12 @@ pub enum Message {
     Error { code: ErrorCode, detail: String },
     Detach { device_id: DeviceId },
     DeviceList(DeviceList),
+    PairRequest(PairRequest),
+    PairResponse(PairResponse),
+    AttachRequest(AttachRequest),
+    AttachResponse(AttachResponse),
+    UrbSubmit(UrbSubmit),
+    UrbComplete(UrbComplete),
 }
 
 impl Message {
@@ -65,6 +125,12 @@ impl Message {
     pub const ERROR_TYPE: u8 = 2;
     pub const DETACH_TYPE: u8 = 3;
     pub const DEVICE_LIST_TYPE: u8 = 4;
+    pub const PAIR_REQUEST_TYPE: u8 = 5;
+    pub const PAIR_RESPONSE_TYPE: u8 = 6;
+    pub const ATTACH_REQUEST_TYPE: u8 = 7;
+    pub const ATTACH_RESPONSE_TYPE: u8 = 8;
+    pub const URB_SUBMIT_TYPE: u8 = 9;
+    pub const URB_COMPLETE_TYPE: u8 = 10;
 
     fn ty(&self) -> u8 {
         match self {
@@ -72,6 +138,12 @@ impl Message {
             Self::Error { .. } => Self::ERROR_TYPE,
             Self::Detach { .. } => Self::DETACH_TYPE,
             Self::DeviceList(_) => Self::DEVICE_LIST_TYPE,
+            Self::PairRequest(_) => Self::PAIR_REQUEST_TYPE,
+            Self::PairResponse(_) => Self::PAIR_RESPONSE_TYPE,
+            Self::AttachRequest(_) => Self::ATTACH_REQUEST_TYPE,
+            Self::AttachResponse(_) => Self::ATTACH_RESPONSE_TYPE,
+            Self::UrbSubmit(_) => Self::URB_SUBMIT_TYPE,
+            Self::UrbComplete(_) => Self::URB_COMPLETE_TYPE,
         }
     }
 }
@@ -137,6 +209,50 @@ pub fn encode(msg: &Message) -> Result<Vec<u8>, Error> {
                 payload.push(u8::from(device.exported));
             }
         }
+        Message::PairRequest(pair) => {
+            payload.extend_from_slice(&pair.client_fingerprint);
+            payload.extend_from_slice(&pair.pin_hash);
+            put_u8_str(&mut payload, "client_name", &pair.client_name)?;
+        }
+        Message::PairResponse(pair) => {
+            payload.push(u8::from(pair.success));
+            payload.extend_from_slice(&pair.server_fingerprint);
+            payload.extend_from_slice(&pair.auth_token);
+        }
+        Message::AttachRequest(attach) => {
+            payload.extend_from_slice(&attach.device_id.0.to_be_bytes());
+            payload.extend_from_slice(&attach.auth_token);
+        }
+        Message::AttachResponse(attach) => {
+            payload.extend_from_slice(&attach.device_id.0.to_be_bytes());
+            payload.push(u8::from(attach.success));
+            payload.extend_from_slice(&attach.usbip_port.to_be_bytes());
+            put_u8_str(&mut payload, "bus_id", &attach.bus_id)?;
+        }
+        Message::UrbSubmit(urb) => {
+            payload.extend_from_slice(&urb.seq.to_be_bytes());
+            payload.extend_from_slice(&urb.device_id.0.to_be_bytes());
+            payload.push(urb.endpoint);
+            payload.push(transfer_to_u8(urb.transfer));
+            let data_len = u16::try_from(urb.data.len()).map_err(|_| Error::FieldTooLong {
+                field: "urb.data",
+                len: urb.data.len(),
+                max: usize::from(u16::MAX),
+            })?;
+            payload.extend_from_slice(&data_len.to_be_bytes());
+            payload.extend_from_slice(&urb.data);
+        }
+        Message::UrbComplete(urb) => {
+            payload.extend_from_slice(&urb.seq.to_be_bytes());
+            payload.extend_from_slice(&urb.status.to_be_bytes());
+            let data_len = u16::try_from(urb.data.len()).map_err(|_| Error::FieldTooLong {
+                field: "urb.data",
+                len: urb.data.len(),
+                max: usize::from(u16::MAX),
+            })?;
+            payload.extend_from_slice(&data_len.to_be_bytes());
+            payload.extend_from_slice(&urb.data);
+        }
     }
     if payload.len() > MAX_PAYLOAD {
         return Err(Error::PayloadTooLarge {
@@ -193,6 +309,7 @@ pub fn decode(bytes: &[u8]) -> Result<Message, Error> {
     parse_payload(ty, &bytes[HEADER_LEN..HEADER_LEN + len])
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_payload(ty: u8, payload: &[u8]) -> Result<Message, Error> {
     let mut cur = Cursor::new(payload);
     match ty {
@@ -242,6 +359,89 @@ fn parse_payload(ty: u8, payload: &[u8]) -> Result<Message, Error> {
             }
             cur.finish()?;
             Ok(Message::DeviceList(DeviceList { devices }))
+        }
+        Message::PAIR_REQUEST_TYPE => {
+            let mut client_fingerprint = [0u8; 32];
+            cur.read_exact(&mut client_fingerprint)?;
+            let mut pin_hash = [0u8; 32];
+            cur.read_exact(&mut pin_hash)?;
+            let client_name = cur.u8_str()?;
+            cur.finish()?;
+            Ok(Message::PairRequest(PairRequest {
+                client_fingerprint,
+                pin_hash,
+                client_name,
+            }))
+        }
+        Message::PAIR_RESPONSE_TYPE => {
+            let success = match cur.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(Error::InvalidPayload),
+            };
+            let mut server_fingerprint = [0u8; 32];
+            cur.read_exact(&mut server_fingerprint)?;
+            let mut auth_token = [0u8; 32];
+            cur.read_exact(&mut auth_token)?;
+            cur.finish()?;
+            Ok(Message::PairResponse(PairResponse {
+                success,
+                server_fingerprint,
+                auth_token,
+            }))
+        }
+        Message::ATTACH_REQUEST_TYPE => {
+            let device_id = DeviceId(cur.u32()?);
+            let mut auth_token = [0u8; 32];
+            cur.read_exact(&mut auth_token)?;
+            cur.finish()?;
+            Ok(Message::AttachRequest(AttachRequest {
+                device_id,
+                auth_token,
+            }))
+        }
+        Message::ATTACH_RESPONSE_TYPE => {
+            let device_id = DeviceId(cur.u32()?);
+            let success = match cur.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(Error::InvalidPayload),
+            };
+            let usbip_port = cur.u16()?;
+            let bus_id = cur.u8_str()?;
+            cur.finish()?;
+            Ok(Message::AttachResponse(AttachResponse {
+                device_id,
+                success,
+                usbip_port,
+                bus_id,
+            }))
+        }
+        Message::URB_SUBMIT_TYPE => {
+            let seq = cur.u32()?;
+            let device_id = DeviceId(cur.u32()?);
+            let endpoint = cur.u8()?;
+            let transfer = u8_to_transfer(cur.u8()?)?;
+            let data_len = usize::from(cur.u16()?);
+            let data = cur.take(data_len)?.to_vec();
+            cur.finish()?;
+            Ok(Message::UrbSubmit(UrbSubmit {
+                seq,
+                device_id,
+                endpoint,
+                transfer,
+                data,
+            }))
+        }
+        Message::URB_COMPLETE_TYPE => {
+            let seq = cur.u32()?;
+            let mut status_buf = [0u8; 4];
+            cur.read_exact(&mut status_buf)?;
+            let status = i32::from_be_bytes(status_buf);
+            let data_len = usize::from(cur.u16()?);
+            let data = cur.take(data_len)?.to_vec();
+            cur.finish()?;
+            Ok(Message::UrbComplete(UrbComplete { seq, status, data }))
         }
         other => Err(Error::UnknownType(other)),
     }
@@ -344,6 +544,25 @@ fn u8_to_speed(value: u8) -> Result<UsbSpeed, Error> {
         2 => Ok(UsbSpeed::Full),
         3 => Ok(UsbSpeed::High),
         4 => Ok(UsbSpeed::Super),
+        _ => Err(Error::InvalidPayload),
+    }
+}
+
+fn transfer_to_u8(t: TransferType) -> u8 {
+    match t {
+        TransferType::Control => 1,
+        TransferType::Interrupt => 2,
+        TransferType::Bulk => 3,
+        TransferType::Isochronous => 4,
+    }
+}
+
+fn u8_to_transfer(value: u8) -> Result<TransferType, Error> {
+    match value {
+        1 => Ok(TransferType::Control),
+        2 => Ok(TransferType::Interrupt),
+        3 => Ok(TransferType::Bulk),
+        4 => Ok(TransferType::Isochronous),
         _ => Err(Error::InvalidPayload),
     }
 }

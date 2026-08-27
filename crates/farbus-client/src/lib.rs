@@ -1,9 +1,13 @@
 use clap::{Parser, Subcommand};
 use farbus_core::PeerFingerprint;
+use std::net::SocketAddr;
 
 #[derive(Parser, Debug)]
 #[command(name = "farbus", about = "Secure USB over the network")]
 pub struct Cli {
+    /// Server TCP address used by pair/devices/attach/detach
+    #[arg(long, global = true)]
+    pub connect: Option<SocketAddr>,
     #[command(subcommand)]
     pub command: Command,
 }
