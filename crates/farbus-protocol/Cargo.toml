@@ -1,0 +1,14 @@
+[package]
+name = "farbus-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "FarBus control-plane framing and messages"
+
+[dependencies]
+thiserror = "2"
+
+[lints]
+workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "farbus-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "FarBus Linux USB export server"
+
+[dependencies]
+farbus-core = { path = "../farbus-core" }
+farbus-protocol = { path = "../farbus-protocol" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
+
+[lints]
+workspace = true

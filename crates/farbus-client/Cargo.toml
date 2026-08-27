@@ -1,0 +1,16 @@
+[package]
+name = "farbus-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "FarBus USB import client"
+
+[dependencies]
+farbus-core = { path = "../farbus-core" }
+farbus-protocol = { path = "../farbus-protocol" }
+clap = { version = "4", features = ["derive"] }
+
+[lints]
+workspace = true
