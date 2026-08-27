@@ -26,6 +26,7 @@
 - HID devices are visible in the list but cannot attach unless explicitly exported.
 - Exclusive per-device leases reject a second client.
 - Protocol frames cap payloads at 65,536 bytes and reject unknown versions, invalid enum values, truncated frames, malformed UTF-8, and trailing payload bytes.
+- Each TLS session permits at most 64 concurrent in-flight URBs; additional reads receive backpressure until a slot completes.
 - USB/IP management structures use fixed sizes; device count and URB payloads are bounded.
 - Plain USB/IP listeners bind to `127.0.0.1` only. No plaintext remote mode exists.
 - Rust workspace forbids `unsafe` code. Native `libusb` is isolated behind `rusb`.

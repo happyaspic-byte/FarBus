@@ -16,7 +16,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{split, AsyncRead, AsyncWrite};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, Semaphore};
+
+const MAX_IN_FLIGHT_URBS: usize = 64;
 
 pub type UrbCompleterFuture = Pin<Box<dyn Future<Output = UrbComplete> + Send>>;
 pub type UrbCompleter = Arc<dyn Fn(UrbSubmit) -> UrbCompleterFuture + Send + Sync>;
@@ -77,6 +79,7 @@ where
     let (mut reader_half, mut writer_half) = split(stream);
     let (out_tx, mut out_rx) = mpsc::channel::<Message>(128);
     let principal = Arc::new(Mutex::new(None));
+    let urb_slots = Arc::new(Semaphore::new(MAX_IN_FLIGHT_URBS));
 
     let writer = async {
         while let Some(msg) = out_rx.recv().await {
@@ -269,10 +272,21 @@ where
                         continue;
                     }
 
+                    let Ok(permit) = Arc::clone(&urb_slots).acquire_owned().await else {
+                        let _ = out_tx
+                            .send(Message::UrbComplete(UrbComplete {
+                                seq: urb.seq,
+                                status: -1,
+                                data: Vec::new(),
+                            }))
+                            .await;
+                        continue;
+                    };
                     let tx = out_tx.clone();
                     let task_state = Arc::clone(&reader_state);
                     tokio::spawn(async move {
                         let complete = complete_session_urb(urb, task_state).await;
+                        drop(permit);
                         let _ = tx.send(Message::UrbComplete(complete)).await;
                     });
                 }
