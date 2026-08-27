@@ -26,7 +26,7 @@ pub use discovery::{decode_beacon, encode_beacon};
 pub use farbus_protocol::{
     AttachRequest, AttachResponse, DetachRequest, DeviceId, DeviceInfo, DeviceList,
     DeviceListRequest, ErrorCode, Hello, Message, PairRequest, PairResponse, TransferType,
-    UrbComplete, UrbSubmit, UsbSpeed, VERSION,
+    UrbComplete, UrbSubmit, UsbInterfaceInfo, UsbSpeed, VERSION,
 };
 pub use fingerprint::{FingerprintError, PeerFingerprint};
 pub use frame::{read_message, write_message, FrameError};

@@ -18,6 +18,12 @@ fn accepts_explicit_ipv4_listener() {
 }
 
 #[test]
+fn parses_custom_usbip_listener() {
+    let cli = Cli::try_parse_from(["farbus-server", "--usbip-listen", "127.0.0.1:33240"]).unwrap();
+    assert_eq!(cli.usbip_listen.to_string(), "127.0.0.1:33240");
+}
+
+#[test]
 fn export_all_is_off_by_default() {
     let cli = Cli::try_parse_from(["farbus-server"]).unwrap();
     assert!(!cli.export_all);

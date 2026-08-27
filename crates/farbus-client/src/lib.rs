@@ -24,6 +24,9 @@ pub enum Command {
     Attach {
         fingerprint: PeerFingerprint,
         device_id: u32,
+        /// Loopback address exposed to the local USB/IP driver.
+        #[arg(long, default_value = "127.0.0.1:3240")]
+        usbip_listen: SocketAddr,
     },
     /// Detach a remote USB device
     Detach {

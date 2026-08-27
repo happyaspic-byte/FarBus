@@ -2,7 +2,9 @@
 
 use crate::urb::complete_urb;
 use crate::usb::{DeviceBackend, LocalDevice};
-use farbus_protocol::{DeviceId, DeviceInfo, TransferType, UrbComplete, UrbSubmit, UsbSpeed};
+use farbus_protocol::{
+    DeviceId, DeviceInfo, TransferType, UrbComplete, UrbSubmit, UsbInterfaceInfo, UsbSpeed,
+};
 use rusb::{Context, DeviceHandle, UsbContext};
 use std::time::Duration;
 
@@ -41,6 +43,7 @@ pub fn scan_libusb() -> Vec<LocalDevice> {
                 speed,
                 product,
                 exported: false,
+                interfaces: collect_interfaces(&device),
             },
             backend: DeviceBackend::Host,
         });
@@ -82,7 +85,8 @@ fn try_host(submit: &UrbSubmit, devices: &[LocalDevice]) -> Option<UrbComplete> 
         .find(|d| d.bus_number() == bus && d.address() == addr)?;
     let handle = usb_dev.open().ok()?;
     let _ = handle.set_auto_detach_kernel_driver(true);
-    let _ = handle.claim_interface(0);
+    let iface = interface_for_endpoint(&device.info.interfaces, submit.endpoint).unwrap_or(0);
+    let _ = handle.claim_interface(iface);
     let timeout = Duration::from_millis(500);
     match submit.transfer {
         TransferType::Control => control(&handle, submit, timeout),
@@ -94,6 +98,34 @@ fn try_host(submit: &UrbSubmit, devices: &[LocalDevice]) -> Option<UrbComplete> 
             data: Vec::new(),
         }),
     }
+}
+
+fn collect_interfaces(device: &rusb::Device<Context>) -> Vec<UsbInterfaceInfo> {
+    let Ok(config) = device.config_descriptor(0) else {
+        return Vec::new();
+    };
+    config
+        .interfaces()
+        .filter_map(|iface| {
+            let desc = iface.descriptors().next()?;
+            let endpoints = desc.endpoint_descriptors().map(|ep| ep.address()).collect();
+            Some(UsbInterfaceInfo {
+                interface_number: desc.interface_number(),
+                interface_class: desc.class_code(),
+                interface_subclass: desc.sub_class_code(),
+                interface_protocol: desc.protocol_code(),
+                endpoints,
+            })
+        })
+        .collect()
+}
+
+fn interface_for_endpoint(ifaces: &[UsbInterfaceInfo], endpoint: u8) -> Option<u8> {
+    ifaces
+        .iter()
+        .find(|iface| iface.endpoints.contains(&endpoint) || endpoint == 0)
+        .map(|iface| iface.interface_number)
+        .or_else(|| ifaces.first().map(|iface| iface.interface_number))
 }
 
 fn parse_bus_addr(bus_id: &str) -> Option<(u8, u8)> {

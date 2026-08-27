@@ -10,5 +10,8 @@ description = "FarBus control-plane framing and messages"
 [dependencies]
 thiserror = "2"
 
+[dev-dependencies]
+proptest = "1"
+
 [lints]
 workspace = true

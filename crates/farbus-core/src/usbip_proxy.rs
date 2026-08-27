@@ -49,7 +49,22 @@ pub fn encode_device_header(device: &LocalDevice) -> Vec<u8> {
     out.push(0);
     out.push(1);
     out.push(1);
-    out.push(1);
+    let niface = u8::try_from(device.info.interfaces.len().max(1)).unwrap_or(1);
+    out.push(niface);
+    out
+}
+
+fn encode_interfaces(device: &LocalDevice) -> Vec<u8> {
+    if device.info.interfaces.is_empty() {
+        return vec![device.info.usb_class, 0, 0, 0];
+    }
+    let mut out = Vec::with_capacity(device.info.interfaces.len() * 4);
+    for iface in &device.info.interfaces {
+        out.push(iface.interface_class);
+        out.push(iface.interface_subclass);
+        out.push(iface.interface_protocol);
+        out.push(0);
+    }
     out
 }
 
@@ -87,7 +102,7 @@ async fn handle_client_filtered(
                 reply.extend_from_slice(&u32::try_from(devices.len()).unwrap_or(0).to_be_bytes());
                 for device in &devices {
                     reply.extend_from_slice(&encode_device_header(device));
-                    reply.extend_from_slice(&[device.info.usb_class, 0, 0, 0]);
+                    reply.extend_from_slice(&encode_interfaces(device));
                 }
                 stream.write_all(&reply).await?;
             }

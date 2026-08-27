@@ -12,13 +12,13 @@
 | IPv6-first dual stack with IPv4 fallback | Supported |
 | PIN pairing, one-use PIN rotation, bearer tokens, exclusive leases | Supported |
 | Authenticated device list / attach / detach / URB | Supported |
+| Multi-interface composite USB devices (interface enumeration & endpoint routing) | Supported |
 | USB/IP transfer length cap (65,536 bytes) | Supported |
 | Automatic TLS reconnect and lease re-attach | Supported |
 
 ## Experimental
 
 - Isochronous devices (webcams, USB audio)
-- Composite USB devices with more than one interface (currently claimed as interface 0)
 - USB 3 UASP storage
 - WAN / high-latency paths
 - Timing-sensitive game controllers and security dongles

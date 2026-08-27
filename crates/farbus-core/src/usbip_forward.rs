@@ -70,7 +70,18 @@ async fn handle_forward(
                 reply.extend_from_slice(&u32::try_from(devices.len()).unwrap_or(0).to_be_bytes());
                 for device in &devices {
                     reply.extend_from_slice(&encode_device_header(device));
-                    reply.extend_from_slice(&[device.info.usb_class, 0, 0, 0]);
+                    if device.info.interfaces.is_empty() {
+                        reply.extend_from_slice(&[device.info.usb_class, 0, 0, 0]);
+                    } else {
+                        for iface in &device.info.interfaces {
+                            reply.extend_from_slice(&[
+                                iface.interface_class,
+                                iface.interface_subclass,
+                                iface.interface_protocol,
+                                0,
+                            ]);
+                        }
+                    }
                 }
                 stream.write_all(&reply).await?;
             }

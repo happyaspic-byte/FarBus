@@ -96,6 +96,15 @@ pub struct UrbComplete {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsbInterfaceInfo {
+    pub interface_number: u8,
+    pub interface_class: u8,
+    pub interface_subclass: u8,
+    pub interface_protocol: u8,
+    pub endpoints: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceInfo {
     pub id: DeviceId,
     pub bus_id: String,
@@ -105,6 +114,7 @@ pub struct DeviceInfo {
     pub speed: UsbSpeed,
     pub product: String,
     pub exported: bool,
+    pub interfaces: Vec<UsbInterfaceInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,6 +242,27 @@ pub fn encode(msg: &Message) -> Result<Vec<u8>, Error> {
                 payload.push(speed_to_u8(device.speed));
                 put_u8_str(&mut payload, "product", &device.product)?;
                 payload.push(u8::from(device.exported));
+                let iface_count =
+                    u8::try_from(device.interfaces.len()).map_err(|_| Error::FieldTooLong {
+                        field: "device.interfaces",
+                        len: device.interfaces.len(),
+                        max: usize::from(u8::MAX),
+                    })?;
+                payload.push(iface_count);
+                for iface in &device.interfaces {
+                    payload.push(iface.interface_number);
+                    payload.push(iface.interface_class);
+                    payload.push(iface.interface_subclass);
+                    payload.push(iface.interface_protocol);
+                    let ep_count =
+                        u8::try_from(iface.endpoints.len()).map_err(|_| Error::FieldTooLong {
+                            field: "interface.endpoints",
+                            len: iface.endpoints.len(),
+                            max: usize::from(u8::MAX),
+                        })?;
+                    payload.push(ep_count);
+                    payload.extend_from_slice(&iface.endpoints);
+                }
             }
         }
         Message::PairRequest(pair) => {
@@ -386,19 +417,48 @@ fn parse_payload(ty: u8, payload: &[u8]) -> Result<Message, Error> {
             let count = usize::from(cur.u16()?);
             let mut devices = Vec::with_capacity(count);
             for _ in 0..count {
+                let id = DeviceId(cur.u32()?);
+                let bus_id = cur.u8_str()?;
+                let vid = cur.u16()?;
+                let pid = cur.u16()?;
+                let usb_class = cur.u8()?;
+                let speed = u8_to_speed(cur.u8()?)?;
+                let product = cur.u8_str()?;
+                let exported = match cur.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(Error::InvalidPayload),
+                };
+                let iface_count = usize::from(cur.u8()?);
+                let mut interfaces = Vec::with_capacity(iface_count);
+                for _ in 0..iface_count {
+                    let interface_number = cur.u8()?;
+                    let interface_class = cur.u8()?;
+                    let interface_subclass = cur.u8()?;
+                    let interface_protocol = cur.u8()?;
+                    let ep_count = usize::from(cur.u8()?);
+                    let mut endpoints = vec![0u8; ep_count];
+                    if ep_count > 0 {
+                        cur.read_exact(&mut endpoints)?;
+                    }
+                    interfaces.push(UsbInterfaceInfo {
+                        interface_number,
+                        interface_class,
+                        interface_subclass,
+                        interface_protocol,
+                        endpoints,
+                    });
+                }
                 devices.push(DeviceInfo {
-                    id: DeviceId(cur.u32()?),
-                    bus_id: cur.u8_str()?,
-                    vid: cur.u16()?,
-                    pid: cur.u16()?,
-                    usb_class: cur.u8()?,
-                    speed: u8_to_speed(cur.u8()?)?,
-                    product: cur.u8_str()?,
-                    exported: match cur.u8()? {
-                        0 => false,
-                        1 => true,
-                        _ => return Err(Error::InvalidPayload),
-                    },
+                    id,
+                    bus_id,
+                    vid,
+                    pid,
+                    usb_class,
+                    speed,
+                    product,
+                    exported,
+                    interfaces,
                 });
             }
             cur.finish()?;
@@ -713,6 +773,7 @@ mod tests {
                     speed: UsbSpeed::High,
                     product: "Unifying Receiver".into(),
                     exported: true,
+                    interfaces: Vec::new(),
                 },
                 DeviceInfo {
                     id: DeviceId(2),
@@ -723,6 +784,7 @@ mod tests {
                     speed: UsbSpeed::Full,
                     product: "FT232".into(),
                     exported: false,
+                    interfaces: Vec::new(),
                 },
             ],
         });

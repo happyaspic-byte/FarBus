@@ -39,10 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let state = Arc::new(ServerState::new(hostname, server_fp, devices.clone()));
 
-    // Spawn loopback USB/IP 1.1 stub listener on 127.0.0.1:3240 (or 3241 if 3240 taken)
     let loopback_devices = devices;
+    let usbip_listen = cli.usbip_listen;
     tokio::spawn(async move {
-        let _ = serve_usbip_loopback(loopback_devices, "127.0.0.1:3240").await;
+        let _ = serve_usbip_loopback(loopback_devices, &usbip_listen.to_string()).await;
     });
 
     let pin = state.pin.lock().await.pin.clone();

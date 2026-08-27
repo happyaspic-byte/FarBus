@@ -1,4 +1,4 @@
-use farbus_protocol::{DeviceId, DeviceInfo, UsbSpeed};
+use farbus_protocol::{DeviceId, DeviceInfo, UsbInterfaceInfo, UsbSpeed};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -47,6 +47,13 @@ pub fn parse_sysfs_device(dir: &Path, id: DeviceId) -> Option<LocalDevice> {
             speed,
             product,
             exported: false,
+            interfaces: vec![UsbInterfaceInfo {
+                interface_number: 0,
+                interface_class: usb_class,
+                interface_subclass: 0,
+                interface_protocol: 0,
+                endpoints: Vec::new(),
+            }],
         },
         backend: DeviceBackend::Host,
     })
@@ -97,6 +104,13 @@ pub fn simulated_lab_devices() -> Vec<LocalDevice> {
                 speed: UsbSpeed::Full,
                 product: "USB Keyboard".into(),
                 exported: true,
+                interfaces: vec![UsbInterfaceInfo {
+                    interface_number: 0,
+                    interface_class: 3,
+                    interface_subclass: 1,
+                    interface_protocol: 1,
+                    endpoints: vec![0x81],
+                }],
             },
             backend: DeviceBackend::Emulated,
         },
@@ -110,6 +124,13 @@ pub fn simulated_lab_devices() -> Vec<LocalDevice> {
                 speed: UsbSpeed::Full,
                 product: "FT232 Serial".into(),
                 exported: true,
+                interfaces: vec![UsbInterfaceInfo {
+                    interface_number: 0,
+                    interface_class: 255,
+                    interface_subclass: 255,
+                    interface_protocol: 255,
+                    endpoints: vec![0x81, 0x02],
+                }],
             },
             backend: DeviceBackend::Emulated,
         },
@@ -123,6 +144,13 @@ pub fn simulated_lab_devices() -> Vec<LocalDevice> {
                 speed: UsbSpeed::High,
                 product: "USB Disk".into(),
                 exported: true,
+                interfaces: vec![UsbInterfaceInfo {
+                    interface_number: 0,
+                    interface_class: 8,
+                    interface_subclass: 6,
+                    interface_protocol: 0x50,
+                    endpoints: vec![0x81, 0x02],
+                }],
             },
             backend: DeviceBackend::Emulated,
         },

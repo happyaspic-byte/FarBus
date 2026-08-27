@@ -1,6 +1,7 @@
 use farbus_protocol::{
-    decode, encode, AttachRequest, AttachResponse, DetachRequest, DeviceId, DeviceListRequest,
-    Message, PairRequest, PairResponse, TransferType, UrbComplete, UrbSubmit,
+    decode, encode, AttachRequest, AttachResponse, DeviceId, DeviceInfo, DeviceList,
+    DeviceListRequest, Message, PairRequest, PairResponse, TransferType, UrbComplete, UrbSubmit,
+    UsbInterfaceInfo, UsbSpeed,
 };
 
 #[test]
@@ -62,10 +63,34 @@ fn roundtrips_device_list_request() {
 }
 
 #[test]
-fn roundtrips_detach_request() {
-    let req = Message::DetachRequest(DetachRequest {
-        device_id: DeviceId(7),
-        auth_token: [0xDD; 32],
+fn roundtrips_composite_device_list() {
+    let msg = Message::DeviceList(DeviceList {
+        devices: vec![DeviceInfo {
+            id: DeviceId(10),
+            bus_id: "1-4".into(),
+            vid: 0x046d,
+            pid: 0xc52b,
+            usb_class: 0,
+            speed: UsbSpeed::High,
+            product: "Composite Receiver".into(),
+            exported: true,
+            interfaces: vec![
+                UsbInterfaceInfo {
+                    interface_number: 0,
+                    interface_class: 3,
+                    interface_subclass: 1,
+                    interface_protocol: 1,
+                    endpoints: vec![0x81],
+                },
+                UsbInterfaceInfo {
+                    interface_number: 1,
+                    interface_class: 3,
+                    interface_subclass: 1,
+                    interface_protocol: 2,
+                    endpoints: vec![0x82],
+                },
+            ],
+        }],
     });
-    assert_eq!(decode(&encode(&req).unwrap()).unwrap(), req);
+    assert_eq!(decode(&encode(&msg).unwrap()).unwrap(), msg);
 }

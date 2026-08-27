@@ -19,7 +19,33 @@ fn pairing_pin_is_not_accepted_on_command_line() {
 fn parses_attach_with_numeric_device_id() {
     let fingerprint = "01".repeat(32);
     let cli = Cli::try_parse_from(["farbus", "attach", &fingerprint, "42"]).unwrap();
-    assert!(matches!(cli.command, Command::Attach { device_id: 42, .. }));
+    assert!(matches!(
+        cli.command,
+        Command::Attach {
+            device_id: 42,
+            usbip_listen,
+            ..
+        } if usbip_listen.to_string() == "127.0.0.1:3240"
+    ));
+}
+
+#[test]
+fn parses_custom_usbip_listen_address() {
+    let fingerprint = "01".repeat(32);
+    let cli = Cli::try_parse_from([
+        "farbus",
+        "attach",
+        &fingerprint,
+        "42",
+        "--usbip-listen",
+        "127.0.0.1:33240",
+    ])
+    .unwrap();
+    assert!(matches!(
+        cli.command,
+        Command::Attach { usbip_listen, .. }
+        if usbip_listen.port() == 33240
+    ));
 }
 
 #[test]

@@ -24,6 +24,7 @@ async fn unexported_physical_device_cannot_be_attached() {
             speed: farbus_core::UsbSpeed::Full,
             product: "Hidden HID".into(),
             exported: false,
+            interfaces: Vec::new(),
         },
         backend: farbus_core::DeviceBackend::Host,
     });

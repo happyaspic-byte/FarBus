@@ -59,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Attach {
             fingerprint,
             device_id,
+            usbip_listen,
         } => {
             let mut client = connect_saved(cli.connect, fingerprint).await?;
             let attached = client.attach(DeviceId(device_id)).await?;
@@ -74,14 +75,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "Attached device {} ({}) through TLS 1.3.",
                 attached.device_id.0, attached.bus_id
             );
-            println!("Local USB/IP proxy: 127.0.0.1:3240");
+            println!("Local USB/IP proxy: {usbip_listen}");
             println!(
-                "Windows: usbip attach --remote=127.0.0.1 --busid={}",
+                "Windows: usbip attach --remote={} --busid={}",
+                usbip_listen.ip(),
                 attached.bus_id
             );
             println!("Press Ctrl+C to stop forwarding.");
             let shared = std::sync::Arc::new(tokio::sync::Mutex::new(client));
-            farbus_core::serve_usbip_forward("127.0.0.1:3240", locals, shared).await?;
+            farbus_core::serve_usbip_forward(&usbip_listen.to_string(), locals, shared).await?;
         }
         Command::Detach {
             fingerprint,
