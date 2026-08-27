@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Paired with {fingerprint}. Token saved locally.");
         }
         Command::Devices { fingerprint } => {
-            let mut client = connect_saved(cli.connect, fingerprint).await?;
+            let client = connect_saved(cli.connect, fingerprint).await?;
             let list = client.devices().await?;
             if list.devices.is_empty() {
                 println!("No exported devices.");
@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             device_id,
             usbip_listen,
         } => {
-            let mut client = connect_saved(cli.connect, fingerprint).await?;
+            let client = connect_saved(cli.connect, fingerprint).await?;
             let attached = client.attach(DeviceId(device_id)).await?;
             let devices = client.devices().await?.devices;
             let locals = devices
@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             fingerprint,
             device_id,
         } => {
-            let mut client = connect_saved(cli.connect, fingerprint).await?;
+            let client = connect_saved(cli.connect, fingerprint).await?;
             client.detach(DeviceId(device_id)).await?;
             println!("Detached device {device_id} from {fingerprint}");
         }

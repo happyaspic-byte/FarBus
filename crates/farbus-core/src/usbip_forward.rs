@@ -5,13 +5,13 @@ use farbus_protocol::usbip::{
     UsbipCmdSubmit, UsbipCmdUnlink, UsbipRetSubmit, UsbipRetUnlink, OP_REP_DEVLIST, OP_REP_IMPORT,
     OP_REQ_DEVLIST, OP_REQ_IMPORT, USBIP_CMD_SUBMIT, USBIP_CMD_UNLINK, USBIP_VERSION,
 };
-use farbus_protocol::{DeviceId, TransferType, UrbSubmit};
+use farbus_protocol::{DeviceId, TransferType};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
-/// Serves USB/IP 1.1 on loopback and forwards URBs over an authenticated `FarBus` session.
+/// Serves USB/IP 1.1 on loopback and forwards URBs concurrently over an authenticated `FarBus` session.
 ///
 /// # Errors
 ///
@@ -98,7 +98,7 @@ async fn handle_forward(
                 reply.extend_from_slice(&OP_REP_IMPORT.to_be_bytes());
                 if let Some(device) = found {
                     {
-                        let mut farbus = client.lock().await;
+                        let farbus = client.lock().await;
                         if farbus.attach(device.info.id).await.is_err() {
                             reply.extend_from_slice(&2u32.to_be_bytes());
                             stream.write_all(&reply).await?;
@@ -108,14 +108,13 @@ async fn handle_forward(
                     reply.extend_from_slice(&0u32.to_be_bytes());
                     reply.extend_from_slice(&encode_device_header(&device));
                     stream.write_all(&reply).await?;
-                    let result = forward_urbs(&mut stream, device.info.id, &client).await;
-                    let mut farbus = client.lock().await;
+                    let result = forward_urbs(stream, device.info.id, &client).await;
+                    let farbus = client.lock().await;
                     let _ = farbus.detach(device.info.id).await;
-                    result?;
-                } else {
-                    reply.extend_from_slice(&4u32.to_be_bytes());
-                    stream.write_all(&reply).await?;
+                    return result;
                 }
+                reply.extend_from_slice(&4u32.to_be_bytes());
+                stream.write_all(&reply).await?;
             }
             _ => break,
         }
@@ -123,34 +122,54 @@ async fn handle_forward(
     Ok(())
 }
 
+enum OutgoingUsbip {
+    Ret(Vec<u8>),
+}
+
+#[allow(clippy::too_many_lines)]
 async fn forward_urbs(
-    stream: &mut TcpStream,
+    stream: TcpStream,
     device_id: DeviceId,
     client: &Arc<Mutex<FarBusClient>>,
 ) -> std::io::Result<()> {
+    let (mut reader_half, mut writer_half) = tokio::io::split(stream);
+    let (out_tx, mut out_rx) = mpsc::channel::<OutgoingUsbip>(256);
+
+    let writer_task = tokio::spawn(async move {
+        while let Some(OutgoingUsbip::Ret(bytes)) = out_rx.recv().await {
+            if writer_half.write_all(&bytes).await.is_err() {
+                break;
+            }
+        }
+    });
+
     loop {
         let mut header = [0u8; 48];
-        if stream.read_exact(&mut header).await.is_err() {
+        if reader_half.read_exact(&mut header).await.is_err() {
             break;
         }
         let command = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
         if command == USBIP_CMD_UNLINK {
             if let Ok(cmd) = UsbipCmdUnlink::decode(&header) {
-                let status = {
-                    let mut farbus = client.lock().await;
-                    farbus
-                        .unlink(device_id, cmd.unlink_seqnum)
-                        .await
-                        .unwrap_or(0)
-                };
-                let ret = UsbipRetUnlink {
-                    seqnum: cmd.seqnum,
-                    devid: cmd.devid,
-                    direction: cmd.direction,
-                    ep: cmd.ep,
-                    status,
-                };
-                stream.write_all(&ret.encode()).await?;
+                let client = Arc::clone(client);
+                let out_tx = out_tx.clone();
+                tokio::spawn(async move {
+                    let status = {
+                        let farbus = client.lock().await;
+                        farbus
+                            .unlink(device_id, cmd.unlink_seqnum)
+                            .await
+                            .unwrap_or(0)
+                    };
+                    let ret = UsbipRetUnlink {
+                        seqnum: cmd.seqnum,
+                        devid: cmd.devid,
+                        direction: cmd.direction,
+                        ep: cmd.ep,
+                        status,
+                    };
+                    let _ = out_tx.send(OutgoingUsbip::Ret(ret.encode().to_vec())).await;
+                });
             }
             continue;
         }
@@ -171,63 +190,74 @@ async fn forward_urbs(
         let mut data = Vec::new();
         if cmd.direction == 0 && cmd.transfer_buffer_length > 0 {
             data.resize(cmd.transfer_buffer_length as usize, 0);
-            stream.read_exact(&mut data).await?;
+            if reader_half.read_exact(&mut data).await.is_err() {
+                break;
+            }
         } else if cmd.ep == 0 {
             data = cmd.setup.to_vec();
         } else {
             data.resize(cmd.transfer_buffer_length as usize, 0);
         }
-        let complete = {
-            let mut farbus = client.lock().await;
-            let first = farbus
-                .urb(
-                    device_id,
-                    cmd.seqnum,
-                    u8::try_from(cmd.ep).unwrap_or(0),
-                    transfer,
-                    data.clone(),
-                )
-                .await;
-            if let Ok(complete) = first {
-                complete
-            } else {
-                farbus
-                    .reconnect()
-                    .await
-                    .map_err(|err| std::io::Error::other(err.to_string()))?;
-                let _ = farbus.attach(device_id).await;
-                farbus
+
+        let client = Arc::clone(client);
+        let out_tx = out_tx.clone();
+        tokio::spawn(async move {
+            let complete = {
+                let farbus = client.lock().await.clone();
+                let first = farbus
                     .urb(
                         device_id,
                         cmd.seqnum,
                         u8::try_from(cmd.ep).unwrap_or(0),
                         transfer,
-                        data,
+                        data.clone(),
                     )
-                    .await
-                    .map_err(|err| std::io::Error::other(err.to_string()))?
+                    .await;
+                if let Ok(complete) = first {
+                    complete
+                } else {
+                    let mut lock = client.lock().await;
+                    if lock.reconnect().await.is_err() || lock.attach(device_id).await.is_err() {
+                        return;
+                    }
+                    let reconnected = lock.clone();
+                    drop(lock);
+                    match reconnected
+                        .urb(
+                            device_id,
+                            cmd.seqnum,
+                            u8::try_from(cmd.ep).unwrap_or(0),
+                            transfer,
+                            data,
+                        )
+                        .await
+                    {
+                        Ok(comp) => comp,
+                        Err(_) => return,
+                    }
+                }
+            };
+            let ret = UsbipRetSubmit {
+                seqnum: cmd.seqnum,
+                devid: cmd.devid,
+                direction: cmd.direction,
+                ep: cmd.ep,
+                status: complete.status,
+                actual_length: u32::try_from(complete.data.len()).unwrap_or(0),
+                start_frame: 0,
+                number_of_packets: 0,
+                error_count: 0,
+                setup: [0; 8],
+            };
+            let mut payload = ret.encode().to_vec();
+            if cmd.direction == 1 && !complete.data.is_empty() {
+                payload.extend_from_slice(&complete.data);
             }
-        };
-        let ret = UsbipRetSubmit {
-            seqnum: cmd.seqnum,
-            devid: cmd.devid,
-            direction: cmd.direction,
-            ep: cmd.ep,
-            status: complete.status,
-            actual_length: u32::try_from(complete.data.len()).unwrap_or(0),
-            start_frame: 0,
-            number_of_packets: 0,
-            error_count: 0,
-            setup: [0; 8],
-        };
-        stream.write_all(&ret.encode()).await?;
-        if cmd.direction == 1 && !complete.data.is_empty() {
-            stream.write_all(&complete.data).await?;
-        }
+            let _ = out_tx.send(OutgoingUsbip::Ret(payload)).await;
+        });
     }
+
+    drop(out_tx);
+    let _ = writer_task.await;
     Ok(())
 }
-
-// Keep unused import warning-free if UrbSubmit is not needed here.
-#[allow(dead_code)]
-fn _urb_ty(_: UrbSubmit) {}

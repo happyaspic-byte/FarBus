@@ -7,6 +7,7 @@ use farbus_protocol::usbip::{
 use farbus_protocol::{DeviceId, TransferType, UrbSubmit};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
 
 fn padded(src: &str, n: usize) -> Vec<u8> {
     let mut out = vec![0u8; n];
@@ -121,11 +122,10 @@ async fn handle_client_filtered(
                     reply.extend_from_slice(&0u32.to_be_bytes());
                     reply.extend_from_slice(&encode_device_header(device));
                     stream.write_all(&reply).await?;
-                    serve_urbs(&mut stream, device.info.id).await?;
-                } else {
-                    reply.extend_from_slice(&4u32.to_be_bytes());
-                    stream.write_all(&reply).await?;
+                    return serve_urbs(stream, device.info.id).await;
                 }
+                reply.extend_from_slice(&4u32.to_be_bytes());
+                stream.write_all(&reply).await?;
             }
             _ => break,
         }
@@ -133,10 +133,22 @@ async fn handle_client_filtered(
     Ok(())
 }
 
-async fn serve_urbs(stream: &mut TcpStream, device_id: DeviceId) -> std::io::Result<()> {
+#[allow(clippy::too_many_lines)]
+async fn serve_urbs(stream: TcpStream, device_id: DeviceId) -> std::io::Result<()> {
+    let (mut reader_half, mut writer_half) = tokio::io::split(stream);
+    let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(256);
+
+    let writer_task = tokio::spawn(async move {
+        while let Some(bytes) = out_rx.recv().await {
+            if writer_half.write_all(&bytes).await.is_err() {
+                break;
+            }
+        }
+    });
+
     loop {
         let mut header = [0u8; 48];
-        if stream.read_exact(&mut header).await.is_err() {
+        if reader_half.read_exact(&mut header).await.is_err() {
             break;
         }
         let command = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
@@ -149,7 +161,7 @@ async fn serve_urbs(stream: &mut TcpStream, device_id: DeviceId) -> std::io::Res
                     ep: cmd.ep,
                     status: 0,
                 };
-                stream.write_all(&ret.encode()).await?;
+                let _ = out_tx.send(ret.encode().to_vec()).await;
             }
             continue;
         }
@@ -170,36 +182,46 @@ async fn serve_urbs(stream: &mut TcpStream, device_id: DeviceId) -> std::io::Res
         let mut data = Vec::new();
         if cmd.direction == 0 && cmd.transfer_buffer_length > 0 {
             data.resize(cmd.transfer_buffer_length as usize, 0);
-            stream.read_exact(&mut data).await?;
+            if reader_half.read_exact(&mut data).await.is_err() {
+                break;
+            }
         } else if cmd.ep == 0 {
             data = cmd.setup.to_vec();
         } else {
             data.resize(cmd.transfer_buffer_length as usize, 0);
         }
-        let complete = complete_urb(&UrbSubmit {
-            seq: cmd.seqnum,
-            device_id,
-            endpoint: u8::try_from(cmd.ep).unwrap_or(0),
-            transfer,
-            data,
+
+        let out_tx = out_tx.clone();
+        tokio::spawn(async move {
+            let complete = complete_urb(&UrbSubmit {
+                seq: cmd.seqnum,
+                device_id,
+                endpoint: u8::try_from(cmd.ep).unwrap_or(0),
+                transfer,
+                data,
+            });
+            let ret = UsbipRetSubmit {
+                seqnum: cmd.seqnum,
+                devid: cmd.devid,
+                direction: cmd.direction,
+                ep: cmd.ep,
+                status: complete.status,
+                actual_length: u32::try_from(complete.data.len()).unwrap_or(0),
+                start_frame: 0,
+                number_of_packets: 0,
+                error_count: 0,
+                setup: [0; 8],
+            };
+            let mut payload = ret.encode().to_vec();
+            if cmd.direction == 1 && !complete.data.is_empty() {
+                payload.extend_from_slice(&complete.data);
+            }
+            let _ = out_tx.send(payload).await;
         });
-        let ret = UsbipRetSubmit {
-            seqnum: cmd.seqnum,
-            devid: cmd.devid,
-            direction: cmd.direction,
-            ep: cmd.ep,
-            status: complete.status,
-            actual_length: u32::try_from(complete.data.len()).unwrap_or(0),
-            start_frame: 0,
-            number_of_packets: 0,
-            error_count: 0,
-            setup: [0; 8],
-        };
-        stream.write_all(&ret.encode()).await?;
-        if cmd.direction == 1 && !complete.data.is_empty() {
-            stream.write_all(&complete.data).await?;
-        }
     }
+
+    drop(out_tx);
+    let _ = writer_task.await;
     Ok(())
 }
 

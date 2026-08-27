@@ -1,5 +1,5 @@
 use crate::fingerprint::PeerFingerprint;
-use crate::frame::{read_message, write_message, FrameError};
+use crate::frame::{write_message, FrameError, FramedReader};
 use crate::identity::{hash_pin, Identity};
 use crate::tls::make_pinned_client_config;
 use farbus_protocol::{
@@ -8,9 +8,15 @@ use farbus_protocol::{
     UrbUnlinked, VERSION,
 };
 use rustls::pki_types::ServerName;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use thiserror::Error;
+use tokio::io::split;
 use tokio::net::TcpStream;
+use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::task::JoinHandle;
 use tokio_rustls::client::TlsStream;
 
 #[derive(Debug, Error)]
@@ -27,18 +33,38 @@ pub enum ClientError {
     Unexpected,
     #[error("attach rejected")]
     AttachRejected,
+    #[error("connection closed")]
+    Closed,
 }
 
+enum ClientCmd {
+    Control {
+        msg: Message,
+        reply: oneshot::Sender<Result<Message, ClientError>>,
+    },
+    Urb {
+        urb: UrbSubmit,
+        reply: oneshot::Sender<Result<UrbComplete, ClientError>>,
+    },
+    Unlink {
+        unlink: UrbUnlink,
+        reply: oneshot::Sender<Result<i32, ClientError>>,
+    },
+}
+
+#[derive(Clone)]
 pub struct FarBusClient {
-    stream: TlsStream<TcpStream>,
+    cmd_tx: mpsc::Sender<ClientCmd>,
     identity: Identity,
-    pub auth_token: Option<[u8; 32]>,
+    auth_token: Option<[u8; 32]>,
     addr: SocketAddr,
     expected: PeerFingerprint,
+    pump_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    closed: Arc<AtomicBool>,
 }
 
 impl FarBusClient {
-    /// Connects to a pinned `FarBus` server over TLS 1.3.
+    /// Connects to a pinned `FarBus` server over TLS 1.3 with concurrent pipelining.
     ///
     /// # Errors
     ///
@@ -53,15 +79,34 @@ impl FarBusClient {
             .await
             .map_err(|_| ClientError::Tls)?;
         let identity = Identity::generate();
-        let mut client = Self {
-            stream,
-            identity,
-            auth_token: None,
-            addr,
-            expected,
-        };
+        let client = Self::from_stream(stream, identity, None, addr, expected);
         client.hello().await?;
         Ok(client)
+    }
+
+    fn from_stream(
+        stream: TlsStream<TcpStream>,
+        identity: Identity,
+        auth_token: Option<[u8; 32]>,
+        addr: SocketAddr,
+        expected: PeerFingerprint,
+    ) -> Self {
+        let (cmd_tx, cmd_rx) = mpsc::channel::<ClientCmd>(256);
+        let closed = Arc::new(AtomicBool::new(false));
+        let closed_clone = Arc::clone(&closed);
+        let pump = tokio::spawn(async move {
+            run_client_pump(stream, cmd_rx, closed_clone).await;
+        });
+
+        Self {
+            cmd_tx,
+            identity,
+            auth_token,
+            addr,
+            expected,
+            pump_task: Arc::new(Mutex::new(Some(pump))),
+            closed,
+        }
     }
 
     /// Reopens the TLS session, preserving the bearer token and client identity.
@@ -74,10 +119,21 @@ impl FarBusClient {
         let tcp = TcpStream::connect(self.addr).await?;
         let _ = tcp.set_nodelay(true);
         let name = ServerName::try_from("farbus.local").map_err(|_| ClientError::Tls)?;
-        self.stream = connector
+        let stream = connector
             .connect(name, tcp)
             .await
             .map_err(|_| ClientError::Tls)?;
+
+        let (cmd_tx, cmd_rx) = mpsc::channel::<ClientCmd>(256);
+        let closed = Arc::new(AtomicBool::new(false));
+        let closed_clone = Arc::clone(&closed);
+        let pump = tokio::spawn(async move {
+            run_client_pump(stream, cmd_rx, closed_clone).await;
+        });
+
+        self.cmd_tx = cmd_tx;
+        self.closed = closed;
+        *self.pump_task.lock().await = Some(pump);
         self.hello().await
     }
 
@@ -92,18 +148,22 @@ impl FarBusClient {
         self.auth_token
     }
 
-    async fn hello(&mut self) -> Result<(), ClientError> {
-        write_message(
-            &mut self.stream,
-            &Message::Hello(Hello {
-                protocol_min: VERSION,
-                protocol_max: VERSION,
-                fingerprint: *self.identity.fingerprint.as_bytes(),
-                hostname: "farbus-client".into(),
-            }),
-        )
-        .await?;
-        match read_message(&mut self.stream).await? {
+    async fn hello(&self) -> Result<(), ClientError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(ClientCmd::Control {
+                msg: Message::Hello(Hello {
+                    protocol_min: VERSION,
+                    protocol_max: VERSION,
+                    fingerprint: *self.identity.fingerprint.as_bytes(),
+                    hostname: "farbus-client".into(),
+                }),
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| ClientError::Closed)?;
+
+        match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::Hello(_) => Ok(()),
             _ => Err(ClientError::Unexpected),
         }
@@ -115,16 +175,20 @@ impl FarBusClient {
     ///
     /// Returns [`ClientError::PairRejected`] when the PIN is invalid.
     pub async fn pair(&mut self, pin: &str, server: PeerFingerprint) -> Result<(), ClientError> {
-        write_message(
-            &mut self.stream,
-            &Message::PairRequest(PairRequest {
-                client_fingerprint: *self.identity.fingerprint.as_bytes(),
-                pin_hash: hash_pin(pin, server),
-                client_name: "farbus-client".into(),
-            }),
-        )
-        .await?;
-        match read_message(&mut self.stream).await? {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(ClientCmd::Control {
+                msg: Message::PairRequest(PairRequest {
+                    client_fingerprint: *self.identity.fingerprint.as_bytes(),
+                    pin_hash: hash_pin(pin, server),
+                    client_name: "farbus-client".into(),
+                }),
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| ClientError::Closed)?;
+
+        match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::PairResponse(PairResponse {
                 success: true,
                 auth_token,
@@ -143,14 +207,18 @@ impl FarBusClient {
     /// # Errors
     ///
     /// Returns framing errors on disconnect.
-    pub async fn devices(&mut self) -> Result<DeviceList, ClientError> {
+    pub async fn devices(&self) -> Result<DeviceList, ClientError> {
         let token = self.auth_token.ok_or(ClientError::PairRejected)?;
-        write_message(
-            &mut self.stream,
-            &Message::DeviceListRequest(DeviceListRequest { auth_token: token }),
-        )
-        .await?;
-        match read_message(&mut self.stream).await? {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(ClientCmd::Control {
+                msg: Message::DeviceListRequest(DeviceListRequest { auth_token: token }),
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| ClientError::Closed)?;
+
+        match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::DeviceList(list) => Ok(list),
             Message::Error { .. } => Err(ClientError::AttachRejected),
             _ => Err(ClientError::Unexpected),
@@ -162,17 +230,21 @@ impl FarBusClient {
     /// # Errors
     ///
     /// Returns [`ClientError::AttachRejected`] when the lease is denied.
-    pub async fn attach(&mut self, device_id: DeviceId) -> Result<AttachResponse, ClientError> {
+    pub async fn attach(&self, device_id: DeviceId) -> Result<AttachResponse, ClientError> {
         let token = self.auth_token.ok_or(ClientError::PairRejected)?;
-        write_message(
-            &mut self.stream,
-            &Message::AttachRequest(AttachRequest {
-                device_id,
-                auth_token: token,
-            }),
-        )
-        .await?;
-        match read_message(&mut self.stream).await? {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(ClientCmd::Control {
+                msg: Message::AttachRequest(AttachRequest {
+                    device_id,
+                    auth_token: token,
+                }),
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| ClientError::Closed)?;
+
+        match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::AttachResponse(res) if res.success => Ok(res),
             Message::AttachResponse(_) | Message::Error { .. } => Err(ClientError::AttachRejected),
             _ => Err(ClientError::Unexpected),
@@ -184,17 +256,21 @@ impl FarBusClient {
     /// # Errors
     ///
     /// Returns framing errors on disconnect.
-    pub async fn detach(&mut self, device_id: DeviceId) -> Result<(), ClientError> {
+    pub async fn detach(&self, device_id: DeviceId) -> Result<(), ClientError> {
         let token = self.auth_token.ok_or(ClientError::PairRejected)?;
-        write_message(
-            &mut self.stream,
-            &Message::DetachRequest(DetachRequest {
-                device_id,
-                auth_token: token,
-            }),
-        )
-        .await?;
-        match read_message(&mut self.stream).await? {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(ClientCmd::Control {
+                msg: Message::DetachRequest(DetachRequest {
+                    device_id,
+                    auth_token: token,
+                }),
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| ClientError::Closed)?;
+
+        match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::Detach { .. } => Ok(()),
             _ => Err(ClientError::Unexpected),
         }
@@ -205,47 +281,142 @@ impl FarBusClient {
     /// # Errors
     ///
     /// Returns framing errors on disconnect.
-    pub async fn unlink(&mut self, device_id: DeviceId, seq: u32) -> Result<i32, ClientError> {
-        write_message(
-            &mut self.stream,
-            &Message::UrbUnlink(UrbUnlink { seq, device_id }),
-        )
-        .await?;
-        match read_message(&mut self.stream).await? {
-            Message::UrbUnlinked(UrbUnlinked { status, .. }) => Ok(status),
-            Message::Error { .. } => Err(ClientError::AttachRejected),
-            _ => Err(ClientError::Unexpected),
-        }
+    pub async fn unlink(&self, device_id: DeviceId, seq: u32) -> Result<i32, ClientError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(ClientCmd::Unlink {
+                unlink: UrbUnlink { seq, device_id },
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| ClientError::Closed)?;
+
+        reply_rx.await.map_err(|_| ClientError::Closed)?
     }
 
-    /// Submits one URB and waits for completion.
+    /// Submits one URB and waits for completion in parallel with other in-flight requests.
     ///
     /// # Errors
     ///
     /// Returns framing errors on disconnect.
     pub async fn urb(
-        &mut self,
+        &self,
         device_id: DeviceId,
         seq: u32,
         endpoint: u8,
         transfer: TransferType,
         data: Vec<u8>,
     ) -> Result<UrbComplete, ClientError> {
-        write_message(
-            &mut self.stream,
-            &Message::UrbSubmit(UrbSubmit {
-                seq,
-                device_id,
-                endpoint,
-                transfer,
-                data,
-            }),
-        )
-        .await?;
-        match read_message(&mut self.stream).await? {
-            Message::UrbComplete(complete) => Ok(complete),
-            Message::Error { .. } => Err(ClientError::AttachRejected),
-            _ => Err(ClientError::Unexpected),
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(ClientCmd::Urb {
+                urb: UrbSubmit {
+                    seq,
+                    device_id,
+                    endpoint,
+                    transfer,
+                    data,
+                },
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| ClientError::Closed)?;
+
+        reply_rx.await.map_err(|_| ClientError::Closed)?
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+async fn run_client_pump(
+    stream: TlsStream<TcpStream>,
+    mut cmd_rx: mpsc::Receiver<ClientCmd>,
+    closed: Arc<AtomicBool>,
+) {
+    let (mut reader_half, mut writer_half) = split(stream);
+    let mut framed_reader = FramedReader::new();
+    let mut pending_urbs: HashMap<u32, oneshot::Sender<Result<UrbComplete, ClientError>>> =
+        HashMap::new();
+    let mut pending_unlinks: HashMap<u32, oneshot::Sender<Result<i32, ClientError>>> =
+        HashMap::new();
+    let mut control_replies: VecDeque<oneshot::Sender<Result<Message, ClientError>>> =
+        VecDeque::new();
+
+    loop {
+        tokio::select! {
+            cmd_opt = cmd_rx.recv() => {
+                let Some(cmd) = cmd_opt else {
+                    break;
+                };
+                match cmd {
+                    ClientCmd::Control { msg, reply } => {
+                        control_replies.push_back(reply);
+                        if let Err(err) = write_message(&mut writer_half, &msg).await {
+                            if let Some(r) = control_replies.pop_front() {
+                                let _ = r.send(Err(ClientError::Frame(err)));
+                            }
+                            break;
+                        }
+                    }
+                    ClientCmd::Urb { urb, reply } => {
+                        pending_urbs.insert(urb.seq, reply);
+                        if write_message(&mut writer_half, &Message::UrbSubmit(urb)).await.is_err() {
+                            break;
+                        }
+                    }
+                    ClientCmd::Unlink { unlink, reply } => {
+                        pending_unlinks.insert(unlink.seq, reply);
+                        if write_message(&mut writer_half, &Message::UrbUnlink(unlink)).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            read_res = framed_reader.read_message(&mut reader_half) => {
+                let Ok(msg) = read_res else {
+                    break;
+                };
+                match msg {
+                    Message::UrbComplete(complete) => {
+                        if let Some(reply) = pending_urbs.remove(&complete.seq) {
+                            let _ = reply.send(Ok(complete));
+                        }
+                    }
+                    Message::UrbUnlinked(UrbUnlinked { seq, status }) => {
+                        if let Some(reply) = pending_unlinks.remove(&seq) {
+                            let _ = reply.send(Ok(status));
+                        }
+                    }
+                    Message::Error { .. } => {
+                        if let Some(reply) = control_replies.pop_front() {
+                            let _ = reply.send(Ok(msg));
+                        } else {
+                            for (_, reply) in pending_urbs.drain() {
+                                let _ = reply.send(Err(ClientError::AttachRejected));
+                            }
+                            for (_, reply) in pending_unlinks.drain() {
+                                let _ = reply.send(Err(ClientError::AttachRejected));
+                            }
+                        }
+                    }
+                    other => {
+                        if let Some(reply) = control_replies.pop_front() {
+                            let _ = reply.send(Ok(other));
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    closed.store(true, Ordering::SeqCst);
+    while let Some(r) = control_replies.pop_front() {
+        let _ = r.send(Err(ClientError::Closed));
+    }
+    for (_, r) in pending_urbs.drain() {
+        let _ = r.send(Err(ClientError::Closed));
+    }
+    for (_, r) in pending_unlinks.drain() {
+        let _ = r.send(Err(ClientError::Closed));
     }
 }

@@ -23,7 +23,7 @@ async fn device_list_requires_pairing() {
         let _ = serve_session(&mut tls, state).await;
     });
 
-    let mut client = FarBusClient::connect(addr, server_fp).await.unwrap();
+    let client = FarBusClient::connect(addr, server_fp).await.unwrap();
     let err = client.devices().await.unwrap_err();
     assert!(matches!(err, farbus_core::ClientError::PairRejected));
 }
