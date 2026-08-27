@@ -67,6 +67,24 @@ pub struct UsbipRetSubmit {
     pub setup: [u8; 8],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsbipCmdUnlink {
+    pub seqnum: u32,
+    pub devid: u32,
+    pub direction: u32,
+    pub ep: u32,
+    pub unlink_seqnum: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsbipRetUnlink {
+    pub seqnum: u32,
+    pub devid: u32,
+    pub direction: u32,
+    pub ep: u32,
+    pub status: i32,
+}
+
 #[derive(Debug, Error)]
 pub enum UsbipError {
     #[error("truncated packet")]
@@ -183,6 +201,41 @@ impl UsbipRetSubmit {
     }
 }
 
+impl UsbipCmdUnlink {
+    /// Decodes a `USBIP_CMD_UNLINK` header (48 bytes).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UsbipError::Truncated`] if slice is smaller than 48 bytes.
+    pub fn decode(bytes: &[u8]) -> Result<Self, UsbipError> {
+        if bytes.len() < 48 {
+            return Err(UsbipError::Truncated);
+        }
+        Ok(Self {
+            seqnum: read_u32_be(bytes, 4)?,
+            devid: read_u32_be(bytes, 8)?,
+            direction: read_u32_be(bytes, 12)?,
+            ep: read_u32_be(bytes, 16)?,
+            unlink_seqnum: read_u32_be(bytes, 20)?,
+        })
+    }
+}
+
+impl UsbipRetUnlink {
+    /// Encodes a `USBIP_RET_UNLINK` header (48 bytes).
+    #[must_use]
+    pub fn encode(&self) -> [u8; 48] {
+        let mut buf = [0u8; 48];
+        buf[0..4].copy_from_slice(&USBIP_RET_UNLINK.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.seqnum.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.devid.to_be_bytes());
+        buf[12..16].copy_from_slice(&self.direction.to_be_bytes());
+        buf[16..20].copy_from_slice(&self.ep.to_be_bytes());
+        buf[20..24].copy_from_slice(&self.status.to_be_bytes());
+        buf
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +273,33 @@ mod tests {
         let encoded_ret = ret.encode();
         let decoded_ret = UsbipRetSubmit::decode(&encoded_ret).unwrap();
         assert_eq!(ret, decoded_ret);
+
+        let unlink = UsbipCmdUnlink {
+            seqnum: 55,
+            devid: 2,
+            direction: 0,
+            ep: 1,
+            unlink_seqnum: 54,
+        };
+        let mut raw_unlink = [0u8; 48];
+        raw_unlink[0..4].copy_from_slice(&USBIP_CMD_UNLINK.to_be_bytes());
+        raw_unlink[4..8].copy_from_slice(&55u32.to_be_bytes());
+        raw_unlink[8..12].copy_from_slice(&2u32.to_be_bytes());
+        raw_unlink[12..16].copy_from_slice(&0u32.to_be_bytes());
+        raw_unlink[16..20].copy_from_slice(&1u32.to_be_bytes());
+        raw_unlink[20..24].copy_from_slice(&54u32.to_be_bytes());
+        assert_eq!(UsbipCmdUnlink::decode(&raw_unlink).unwrap(), unlink);
+
+        let ret_unlink = UsbipRetUnlink {
+            seqnum: 55,
+            devid: 2,
+            direction: 0,
+            ep: 1,
+            status: 0,
+        };
+        assert_eq!(
+            u32::from_be_bytes(ret_unlink.encode()[0..4].try_into().unwrap()),
+            USBIP_RET_UNLINK
+        );
     }
 }

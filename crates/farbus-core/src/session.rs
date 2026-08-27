@@ -7,7 +7,7 @@ use crate::urb::complete_urb;
 use crate::usb::DeviceBackend;
 use crate::usb::LocalDevice;
 use farbus_protocol::{
-    AttachResponse, DeviceList, ErrorCode, Hello, Message, PairResponse, VERSION,
+    AttachResponse, DeviceList, ErrorCode, Hello, Message, PairResponse, UrbUnlinked, VERSION,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -323,6 +323,38 @@ where
                 #[cfg(not(target_os = "linux"))]
                 let complete = complete_urb(&urb);
                 write_message(stream, &Message::UrbComplete(complete)).await?;
+            }
+            Message::UrbUnlink(unlink) => {
+                let Some(peer) = principal else {
+                    write_message(
+                        stream,
+                        &Message::Error {
+                            code: ErrorCode::Unauthorized,
+                            detail: "missing client identity".into(),
+                        },
+                    )
+                    .await?;
+                    continue;
+                };
+                if state.leases.lock().await.owner(unlink.device_id) != Some(peer) {
+                    write_message(
+                        stream,
+                        &Message::Error {
+                            code: ErrorCode::Unauthorized,
+                            detail: "device lease required".into(),
+                        },
+                    )
+                    .await?;
+                    continue;
+                }
+                write_message(
+                    stream,
+                    &Message::UrbUnlinked(UrbUnlinked {
+                        seq: unlink.seq,
+                        status: 0,
+                    }),
+                )
+                .await?;
             }
             other => {
                 write_message(

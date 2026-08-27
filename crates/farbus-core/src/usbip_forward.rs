@@ -2,8 +2,8 @@ use crate::client::FarBusClient;
 use crate::usb::LocalDevice;
 use crate::usbip_proxy::encode_device_header;
 use farbus_protocol::usbip::{
-    UsbipCmdSubmit, UsbipRetSubmit, OP_REP_DEVLIST, OP_REP_IMPORT, OP_REQ_DEVLIST, OP_REQ_IMPORT,
-    USBIP_CMD_SUBMIT, USBIP_CMD_UNLINK, USBIP_RET_UNLINK, USBIP_VERSION,
+    UsbipCmdSubmit, UsbipCmdUnlink, UsbipRetSubmit, UsbipRetUnlink, OP_REP_DEVLIST, OP_REP_IMPORT,
+    OP_REQ_DEVLIST, OP_REQ_IMPORT, USBIP_CMD_SUBMIT, USBIP_CMD_UNLINK, USBIP_VERSION,
 };
 use farbus_protocol::{DeviceId, TransferType, UrbSubmit};
 use std::sync::Arc;
@@ -135,8 +135,23 @@ async fn forward_urbs(
         }
         let command = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
         if command == USBIP_CMD_UNLINK {
-            header[0..4].copy_from_slice(&USBIP_RET_UNLINK.to_be_bytes());
-            stream.write_all(&header).await?;
+            if let Ok(cmd) = UsbipCmdUnlink::decode(&header) {
+                let status = {
+                    let mut farbus = client.lock().await;
+                    farbus
+                        .unlink(device_id, cmd.unlink_seqnum)
+                        .await
+                        .unwrap_or(0)
+                };
+                let ret = UsbipRetUnlink {
+                    seqnum: cmd.seqnum,
+                    devid: cmd.devid,
+                    direction: cmd.direction,
+                    ep: cmd.ep,
+                    status,
+                };
+                stream.write_all(&ret.encode()).await?;
+            }
             continue;
         }
         if command != USBIP_CMD_SUBMIT {

@@ -1,12 +1,13 @@
 use farbus_core::simulated_lab_devices;
 use farbus_protocol::usbip::{
-    UsbipCmdSubmit, UsbipRetSubmit, OP_REP_DEVLIST, OP_REP_IMPORT, OP_REQ_DEVLIST, OP_REQ_IMPORT,
-    USBIP_VERSION,
+    UsbipCmdSubmit, UsbipCmdUnlink, UsbipRetSubmit, UsbipRetUnlink, OP_REP_DEVLIST, OP_REP_IMPORT,
+    OP_REQ_DEVLIST, OP_REQ_IMPORT, USBIP_CMD_UNLINK, USBIP_RET_UNLINK, USBIP_VERSION,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn usbip_devlist_import_and_interrupt_urb() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -89,4 +90,37 @@ async fn usbip_devlist_import_and_interrupt_urb() {
     let mut payload = vec![0u8; reply.actual_length as usize];
     client.read_exact(&mut payload).await.unwrap();
     assert_eq!(payload[1], b'A');
+
+    // Send USBIP_CMD_UNLINK for seqnum 7
+    let unlink = UsbipCmdUnlink {
+        seqnum: 8,
+        devid: 1,
+        direction: 0,
+        ep: 0x81,
+        unlink_seqnum: 7,
+    };
+    let mut raw_unlink = [0u8; 48];
+    raw_unlink[0..4].copy_from_slice(&USBIP_CMD_UNLINK.to_be_bytes());
+    raw_unlink[4..8].copy_from_slice(&unlink.seqnum.to_be_bytes());
+    raw_unlink[8..12].copy_from_slice(&unlink.devid.to_be_bytes());
+    raw_unlink[12..16].copy_from_slice(&unlink.direction.to_be_bytes());
+    raw_unlink[16..20].copy_from_slice(&unlink.ep.to_be_bytes());
+    raw_unlink[20..24].copy_from_slice(&unlink.unlink_seqnum.to_be_bytes());
+    client.write_all(&raw_unlink).await.unwrap();
+
+    let mut ret_unlink_hdr = [0u8; 48];
+    client.read_exact(&mut ret_unlink_hdr).await.unwrap();
+    assert_eq!(
+        u32::from_be_bytes(ret_unlink_hdr[0..4].try_into().unwrap()),
+        USBIP_RET_UNLINK
+    );
+    let reply_unlink = UsbipRetUnlink {
+        seqnum: u32::from_be_bytes(ret_unlink_hdr[4..8].try_into().unwrap()),
+        devid: u32::from_be_bytes(ret_unlink_hdr[8..12].try_into().unwrap()),
+        direction: u32::from_be_bytes(ret_unlink_hdr[12..16].try_into().unwrap()),
+        ep: u32::from_be_bytes(ret_unlink_hdr[16..20].try_into().unwrap()),
+        status: i32::from_be_bytes(ret_unlink_hdr[20..24].try_into().unwrap()),
+    };
+    assert_eq!(reply_unlink.seqnum, 8);
+    assert_eq!(reply_unlink.status, 0);
 }

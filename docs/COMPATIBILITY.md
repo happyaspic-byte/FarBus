@@ -14,6 +14,7 @@
 | Authenticated device list / attach / detach / URB | Supported |
 | Multi-interface composite USB devices (interface enumeration & endpoint routing) | Supported |
 | USB/IP transfer length cap (65,536 bytes) | Supported |
+| USB/IP UNLINK (structured RET_UNLINK; physical rusb cancel is timeout-bounded) | Supported |
 | Automatic TLS reconnect and lease re-attach | Supported |
 
 ## Experimental

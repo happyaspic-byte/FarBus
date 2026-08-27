@@ -4,7 +4,8 @@ use crate::identity::{hash_pin, Identity};
 use crate::tls::make_pinned_client_config;
 use farbus_protocol::{
     AttachRequest, AttachResponse, DetachRequest, DeviceId, DeviceList, DeviceListRequest, Hello,
-    Message, PairRequest, PairResponse, TransferType, UrbComplete, UrbSubmit, VERSION,
+    Message, PairRequest, PairResponse, TransferType, UrbComplete, UrbSubmit, UrbUnlink,
+    UrbUnlinked, VERSION,
 };
 use rustls::pki_types::ServerName;
 use std::net::SocketAddr;
@@ -195,6 +196,24 @@ impl FarBusClient {
         .await?;
         match read_message(&mut self.stream).await? {
             Message::Detach { .. } => Ok(()),
+            _ => Err(ClientError::Unexpected),
+        }
+    }
+
+    /// Requests cancellation of a previously submitted URB.
+    ///
+    /// # Errors
+    ///
+    /// Returns framing errors on disconnect.
+    pub async fn unlink(&mut self, device_id: DeviceId, seq: u32) -> Result<i32, ClientError> {
+        write_message(
+            &mut self.stream,
+            &Message::UrbUnlink(UrbUnlink { seq, device_id }),
+        )
+        .await?;
+        match read_message(&mut self.stream).await? {
+            Message::UrbUnlinked(UrbUnlinked { status, .. }) => Ok(status),
+            Message::Error { .. } => Err(ClientError::AttachRejected),
             _ => Err(ClientError::Unexpected),
         }
     }

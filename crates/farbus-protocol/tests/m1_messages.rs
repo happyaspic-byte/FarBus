@@ -1,7 +1,7 @@
 use farbus_protocol::{
     decode, encode, AttachRequest, AttachResponse, DeviceId, DeviceInfo, DeviceList,
     DeviceListRequest, Message, PairRequest, PairResponse, TransferType, UrbComplete, UrbSubmit,
-    UsbInterfaceInfo, UsbSpeed,
+    UrbUnlink, UrbUnlinked, UsbInterfaceInfo, UsbSpeed,
 };
 
 #[test]
@@ -93,4 +93,15 @@ fn roundtrips_composite_device_list() {
         }],
     });
     assert_eq!(decode(&encode(&msg).unwrap()).unwrap(), msg);
+}
+
+#[test]
+fn roundtrips_urb_unlink_and_unlinked() {
+    let unlink = Message::UrbUnlink(UrbUnlink {
+        seq: 55,
+        device_id: DeviceId(3),
+    });
+    let unlinked = Message::UrbUnlinked(UrbUnlinked { seq: 55, status: 0 });
+    assert_eq!(decode(&encode(&unlink).unwrap()).unwrap(), unlink);
+    assert_eq!(decode(&encode(&unlinked).unwrap()).unwrap(), unlinked);
 }

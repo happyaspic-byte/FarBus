@@ -96,6 +96,18 @@ pub struct UrbComplete {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrbUnlink {
+    pub seq: u32,
+    pub device_id: DeviceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrbUnlinked {
+    pub seq: u32,
+    pub status: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsbInterfaceInfo {
     pub interface_number: u8,
     pub interface_class: u8,
@@ -141,6 +153,8 @@ pub enum Message {
     AttachResponse(AttachResponse),
     UrbSubmit(UrbSubmit),
     UrbComplete(UrbComplete),
+    UrbUnlink(UrbUnlink),
+    UrbUnlinked(UrbUnlinked),
 }
 
 impl Message {
@@ -156,6 +170,8 @@ impl Message {
     pub const URB_COMPLETE_TYPE: u8 = 10;
     pub const DEVICE_LIST_REQUEST_TYPE: u8 = 11;
     pub const DETACH_REQUEST_TYPE: u8 = 12;
+    pub const URB_UNLINK_TYPE: u8 = 13;
+    pub const URB_UNLINKED_TYPE: u8 = 14;
 
     fn ty(&self) -> u8 {
         match self {
@@ -171,6 +187,8 @@ impl Message {
             Self::AttachResponse(_) => Self::ATTACH_RESPONSE_TYPE,
             Self::UrbSubmit(_) => Self::URB_SUBMIT_TYPE,
             Self::UrbComplete(_) => Self::URB_COMPLETE_TYPE,
+            Self::UrbUnlink(_) => Self::URB_UNLINK_TYPE,
+            Self::UrbUnlinked(_) => Self::URB_UNLINKED_TYPE,
         }
     }
 }
@@ -308,6 +326,14 @@ pub fn encode(msg: &Message) -> Result<Vec<u8>, Error> {
             })?;
             payload.extend_from_slice(&data_len.to_be_bytes());
             payload.extend_from_slice(&urb.data);
+        }
+        Message::UrbUnlink(unlink) => {
+            payload.extend_from_slice(&unlink.seq.to_be_bytes());
+            payload.extend_from_slice(&unlink.device_id.0.to_be_bytes());
+        }
+        Message::UrbUnlinked(unlinked) => {
+            payload.extend_from_slice(&unlinked.seq.to_be_bytes());
+            payload.extend_from_slice(&unlinked.status.to_be_bytes());
         }
     }
     if payload.len() > MAX_PAYLOAD {
@@ -546,6 +572,20 @@ fn parse_payload(ty: u8, payload: &[u8]) -> Result<Message, Error> {
             let data = cur.take(data_len)?.to_vec();
             cur.finish()?;
             Ok(Message::UrbComplete(UrbComplete { seq, status, data }))
+        }
+        Message::URB_UNLINK_TYPE => {
+            let seq = cur.u32()?;
+            let device_id = DeviceId(cur.u32()?);
+            cur.finish()?;
+            Ok(Message::UrbUnlink(UrbUnlink { seq, device_id }))
+        }
+        Message::URB_UNLINKED_TYPE => {
+            let seq = cur.u32()?;
+            let mut status_buf = [0u8; 4];
+            cur.read_exact(&mut status_buf)?;
+            let status = i32::from_be_bytes(status_buf);
+            cur.finish()?;
+            Ok(Message::UrbUnlinked(UrbUnlinked { seq, status }))
         }
         other => Err(Error::UnknownType(other)),
     }

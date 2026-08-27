@@ -36,7 +36,7 @@
 - Bearer token theft by a process with access to the user's account permits device attachment until token invalidation/restart.
 - PIN pairing authenticates physical possession/display access, not a centralized user identity.
 - Isochronous transfers remain unsupported by the physical backend.
-- USB/IP `UNLINK` is acknowledged, but cancellation of an already-running synchronous libusb operation is best-effort.
+- USB/IP `UNLINK` is decoded into a structured `UsbipRetUnlink` and forwarded as a FarBus `UrbUnlink` on the TLS session. Safe `rusb` 0.9 has no in-flight transfer cancel API, so an already-running physical libusb call still runs until its 500 ms timeout.
 - Session and identity files are written to a mode-restricted temp file and renamed into place. Windows does not use DPAPI.
 - Network latency can violate USB device timing expectations.
 
