@@ -13,6 +13,7 @@
 | PIN pairing, one-use PIN rotation, bearer tokens, exclusive leases | Supported |
 | Authenticated device list / attach / detach / URB | Supported |
 | Multi-interface composite USB devices (interface enumeration & endpoint routing) | Supported |
+| Non-blocking pipelined URB submits & cancel-safe framed stream decoding | Supported |
 | USB/IP transfer length cap (65,536 bytes) | Supported |
 | USB/IP UNLINK (structured RET_UNLINK; physical rusb cancel is timeout-bounded) | Supported |
 | Automatic TLS reconnect and lease re-attach | Supported |
@@ -24,7 +25,7 @@
 - WAN / high-latency paths
 - Timing-sensitive game controllers and security dongles
 
-Loopback bulk benchmarks measure serialized URB round-trips over one TLS session. They are a transport ceiling, not physical USB or pipelined USB/IP throughput.
+Loopback bulk benchmarks measure sequential URB round-trips over one TLS session. They are a transport ceiling, not physical USB throughput; the session accepts multiple in-flight URBs and emits completions as each finishes.
 
 ## Not supported
 

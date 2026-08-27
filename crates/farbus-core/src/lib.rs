@@ -29,7 +29,7 @@ pub use farbus_protocol::{
     UrbComplete, UrbSubmit, UrbUnlink, UrbUnlinked, UsbInterfaceInfo, UsbSpeed, VERSION,
 };
 pub use fingerprint::{FingerprintError, PeerFingerprint};
-pub use frame::{read_message, write_message, FrameError};
+pub use frame::{read_message, write_message, FrameError, FramedReader};
 pub use happy::happy_eyeballs_connect;
 #[cfg(target_os = "linux")]
 pub use host_usb::{complete_host_or_emulated, scan_libusb};
@@ -40,7 +40,7 @@ pub use lease::{LeaseBook, LeaseError};
 pub use path::connection_order;
 pub use persist::load_or_create_server_identity;
 pub use reconnect::{connect_with_retry, ReconnectPolicy};
-pub use session::{serve_session, ServerState};
+pub use session::{serve_session, ServerState, UrbCompleter, UrbCompleterFuture};
 pub use state::{ConnectionEvent, ConnectionMachine, ConnectionState, TransitionError};
 pub use store::{load_session, save_session, StoredSession};
 pub use tls::{make_pinned_client_config, make_self_signed, make_server_config, TlsError};
