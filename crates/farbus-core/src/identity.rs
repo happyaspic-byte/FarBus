@@ -69,6 +69,7 @@ pub struct PairingPin {
     pub pin: String,
     pub hash: [u8; 32],
     expires_at: Instant,
+    attempts: u8,
 }
 
 impl PairingPin {
@@ -79,12 +80,18 @@ impl PairingPin {
             hash: hash_pin(&pin, server),
             pin,
             expires_at: Instant::now() + PIN_TTL,
+            attempts: 0,
         }
     }
 
+    /// Constant-time PIN check with a five-attempt lockout.
     #[must_use]
-    pub fn is_valid(&self, candidate_hash: &[u8; 32]) -> bool {
-        Instant::now() <= self.expires_at && constant_time_eq(&self.hash, candidate_hash)
+    pub fn is_valid(&mut self, candidate_hash: &[u8; 32]) -> bool {
+        if self.attempts >= 5 || Instant::now() > self.expires_at {
+            return false;
+        }
+        self.attempts = self.attempts.saturating_add(1);
+        constant_time_eq(&self.hash, candidate_hash)
     }
 }
 

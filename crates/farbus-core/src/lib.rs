@@ -4,6 +4,9 @@ pub mod client;
 pub mod discovery;
 pub mod fingerprint;
 pub mod frame;
+pub mod happy;
+#[cfg(target_os = "linux")]
+pub mod host_usb;
 pub mod identity;
 pub mod lease;
 pub mod path;
@@ -25,6 +28,9 @@ pub use farbus_protocol::{
 };
 pub use fingerprint::{FingerprintError, PeerFingerprint};
 pub use frame::{read_message, write_message, FrameError};
+pub use happy::happy_eyeballs_connect;
+#[cfg(target_os = "linux")]
+pub use host_usb::{complete_host_or_emulated, scan_libusb};
 pub use identity::{
     constant_time_eq, fingerprint_from_secret, hash_pin, issue_auth_token, Identity, PairingPin,
 };

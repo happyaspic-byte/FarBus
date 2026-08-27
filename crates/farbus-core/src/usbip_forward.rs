@@ -3,7 +3,7 @@ use crate::usb::LocalDevice;
 use crate::usbip_proxy::encode_device_header;
 use farbus_protocol::usbip::{
     UsbipCmdSubmit, UsbipRetSubmit, OP_REP_DEVLIST, OP_REP_IMPORT, OP_REQ_DEVLIST, OP_REQ_IMPORT,
-    USBIP_VERSION,
+    USBIP_CMD_SUBMIT, USBIP_CMD_UNLINK, USBIP_RET_UNLINK, USBIP_VERSION,
 };
 use farbus_protocol::{DeviceId, TransferType, UrbSubmit};
 use std::sync::Arc;
@@ -108,6 +108,15 @@ async fn forward_urbs(
     loop {
         let mut header = [0u8; 48];
         if stream.read_exact(&mut header).await.is_err() {
+            break;
+        }
+        let command = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+        if command == USBIP_CMD_UNLINK {
+            header[0..4].copy_from_slice(&USBIP_RET_UNLINK.to_be_bytes());
+            stream.write_all(&header).await?;
+            continue;
+        }
+        if command != USBIP_CMD_SUBMIT {
             break;
         }
         let Ok(cmd) = UsbipCmdSubmit::decode(&header) else {

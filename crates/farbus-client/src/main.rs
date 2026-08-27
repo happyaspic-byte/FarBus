@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             print!("Enter 6-digit PIN from server: ");
             io::stdout().flush()?;
             let pin = rpassword::read_password()?.trim().to_string();
-            let mut client = FarBusClient::connect(addr, fingerprint).await?;
+            let mut client = farbus_core::happy_eyeballs_connect([addr], fingerprint).await?;
             client.pair(&pin, fingerprint).await?;
             let token = client.auth_token().ok_or("server did not issue token")?;
             save_session(&StoredSession {
@@ -61,14 +61,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let mut client = connect_saved(cli.connect, fingerprint).await?;
             let attached = client.attach(DeviceId(device_id)).await?;
+            let devices = client.devices().await?.devices;
+            let locals = devices
+                .into_iter()
+                .map(|info| farbus_core::LocalDevice { info })
+                .collect();
             println!(
-                "Attached device {} ({}) remote-usbip-port={}",
-                attached.device_id.0, attached.bus_id, attached.usbip_port
+                "Attached device {} ({}) through TLS 1.3.",
+                attached.device_id.0, attached.bus_id
             );
+            println!("Local USB/IP proxy: 127.0.0.1:3240");
             println!(
                 "Windows: usbip attach --remote=127.0.0.1 --busid={}",
                 attached.bus_id
             );
+            println!("Press Ctrl+C to stop forwarding.");
+            let shared = std::sync::Arc::new(tokio::sync::Mutex::new(client));
+            farbus_core::serve_usbip_forward("127.0.0.1:3240", locals, shared).await?;
         }
         Command::Detach {
             fingerprint,
@@ -92,7 +101,11 @@ async fn connect_saved(
 ) -> Result<FarBusClient, Box<dyn std::error::Error>> {
     let saved = load_session(Some(fingerprint)).ok_or("run 'farbus pair' first")?;
     let addr = connect.unwrap_or(saved.addr);
-    Ok(FarBusClient::connect(addr, fingerprint)
-        .await?
-        .with_auth_token(saved.auth_token))
+    Ok(farbus_core::connect_with_retry(
+        addr,
+        fingerprint,
+        Some(saved.auth_token),
+        &farbus_core::ReconnectPolicy::default(),
+    )
+    .await?)
 }

@@ -2,6 +2,7 @@ use crate::fingerprint::PeerFingerprint;
 use crate::frame::{read_message, write_message, FrameError};
 use crate::identity::{issue_auth_token, PairingPin};
 use crate::lease::LeaseBook;
+#[cfg(not(target_os = "linux"))]
 use crate::urb::complete_urb;
 use crate::usb::LocalDevice;
 use farbus_protocol::{
@@ -76,7 +77,7 @@ where
                 .await?;
             }
             Message::PairRequest(req) => {
-                let pin = state.pin.lock().await;
+                let mut pin = state.pin.lock().await;
                 let success = pin.is_valid(&req.pin_hash);
                 let token = if success {
                     let token = issue_auth_token();
@@ -156,6 +157,9 @@ where
                 write_message(stream, &Message::Detach { device_id }).await?;
             }
             Message::UrbSubmit(urb) => {
+                #[cfg(target_os = "linux")]
+                let complete = crate::host_usb::complete_host_or_emulated(&urb, &state.devices);
+                #[cfg(not(target_os = "linux"))]
                 let complete = complete_urb(&urb);
                 write_message(stream, &Message::UrbComplete(complete)).await?;
             }

@@ -61,7 +61,7 @@ pub fn make_server_config(
     certs: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
 ) -> Result<TlsAcceptor, TlsError> {
-    let mut cfg = ServerConfig::builder()
+    let mut cfg = ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(TlsError::Rustls)?;
@@ -130,7 +130,7 @@ pub fn make_pinned_client_config(
         expected: expected_server,
         supported_algs,
     });
-    let mut cfg = ClientConfig::builder()
+    let mut cfg = ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
         .dangerous()
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();

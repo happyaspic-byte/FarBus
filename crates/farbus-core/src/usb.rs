@@ -66,6 +66,13 @@ pub fn scan_sysfs(root: &Path) -> Vec<LocalDevice> {
 
 #[must_use]
 pub fn scan_host_usb() -> Vec<LocalDevice> {
+    #[cfg(target_os = "linux")]
+    {
+        let libusb = crate::host_usb::scan_libusb();
+        if !libusb.is_empty() {
+            return libusb;
+        }
+    }
     scan_sysfs(&PathBuf::from("/sys/bus/usb/devices"))
 }
 

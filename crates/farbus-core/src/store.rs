@@ -24,12 +24,21 @@ pub fn save_session(session: &StoredSession) -> std::io::Result<()> {
         let _ = write!(token_hex, "{b:02x}");
     }
     let content = format!("{}\n{}\n{}\n", session.addr, session.fingerprint, token_hex);
-    fs::write(
-        dir.join(format!("{}.session", session.fingerprint)),
-        content,
-    )?;
-    fs::write(dir.join("latest"), session.fingerprint.to_string())?;
+    let session_path = dir.join(format!("{}.session", session.fingerprint));
+    fs::write(&session_path, content)?;
+    restrict_file_mode(&session_path);
+    let latest = dir.join("latest");
+    fs::write(&latest, session.fingerprint.to_string())?;
+    restrict_file_mode(&latest);
     Ok(())
+}
+
+fn restrict_file_mode(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
 }
 
 #[must_use]

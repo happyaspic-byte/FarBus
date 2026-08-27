@@ -51,7 +51,7 @@ async fn full_tls_handshake_pairing_and_urb_roundtrip() {
             let msg = read_message(&mut tls).await.unwrap();
             let mut issued_token = [0u8; 32];
             if let Message::PairRequest(pair) = msg {
-                let pin_guard = current_pin.lock().await;
+                let mut pin_guard = current_pin.lock().await;
                 let ok = pin_guard.is_valid(&pair.pin_hash);
                 if ok {
                     issued_token = issue_auth_token();
