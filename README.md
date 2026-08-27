@@ -8,14 +8,16 @@ Secure, high-performance open-source USB sharing over IPv6 and IPv4.
 
 - **Zero-Config Discovery:** UDP broadcast beacon on IPv6 (`[ff02::1]:7421`) and IPv4 (`255.255.255.255:7421`).
 - **Encrypted by Default:** TLS 1.3 with ephemeral self-signed ECDSA P-256 certificates pinned by 32-byte SHA-256 fingerprint (`farbus-v1` ALPN).
-- **One-Time Pairing:** 6-digit rate-limited PIN with constant-time SHA-256 hash verification issuing scoped 256-bit bearer auth tokens.
+- **One-Time Pairing:** 6-digit PIN, five failed attempts then lockout, constant-time SHA-256 verification. A successful pair consumes the PIN, rotates a new one, and issues a 256-bit bearer token.
 - **Lease State Machine:** Exclusive, reentrant device leasing with owner-only release protection.
 - **Linux USB Inventory:** Reads physical USB devices from `/sys/bus/usb/devices` (VID, PID, speed, class, product). Falls back to simulated test devices if run in headless/container environments.
 - **USB/IP 1.1 Wire Codec:** Complete big-endian parser and encoder for `OP_REQ_DEVLIST`, `OP_REP_DEVLIST`, `OP_REQ_IMPORT`, `OP_REP_IMPORT`, `USBIP_CMD_SUBMIT`, and `USBIP_RET_SUBMIT` (compatible with Linux kernel `usbip-host` and Windows `usbip-win2`).
 - **Loopback USB/IP Proxy:** Binds to `127.0.0.1:3240` so standard Windows/Linux USB/IP clients connect locally without exposing raw plaintext traffic over the physical network.
-- **Reproducible Benchmarks:** `farbus-bench` harness measuring round-trip URB latency (< 0.4 ms), bulk throughput, and reconnect cycles (~4.5 ms).
+- **Reproducible Benchmarks:** `farbus-bench` harness measuring URB latency, bulk throughput, and reconnect cycles.
 - **Dual-Stack Pathing:** Happy Eyeballs address interleave prioritizing IPv6 while retaining IPv4 fallback.
-- **Full Quality Suite:** 28 unit and end-to-end integration tests, `-D warnings` on all Clippy lints, `unsafe_code = "forbid"`, and dual Linux/Windows CI with cargo-audit.
+- **Authenticated Data Plane:** Device list, attach, detach, and URB require a verified token bound to the TLS session. Hello fingerprints alone cannot list or steal a lease.
+- **Bounded USB/IP:** `transfer_buffer_length` above 65,536 bytes is rejected before allocation.
+- **Full Quality Suite:** Workspace tests, `-D warnings` Clippy, `unsafe_code = "forbid"`, Linux/Windows CI, dependency audit, and loopback benchmarks.
 
 ## Quick Start
 
@@ -86,10 +88,10 @@ cargo run --release -p farbus-bench -- --scenario bulk-throughput
 cargo run --release -p farbus-bench -- --scenario reconnect
 ```
 
-Typical results on modern hardware (loopback TLS):
-- **URB Control RTT:** ~0.39 ms
-- **Throughput:** > 2,500 operations/second
-- **Reconnect Time:** ~4.5 ms per full TLS+handshake cycle
+Measured on this workspace (loopback TLS 1.3, release, emulated devices — not physical USB):
+- **URB Control RTT:** 0.155 ms (6,457 ops/s, 1,000 rounds)
+- **Bulk OUT:** 68.87 MB/s (16 KiB × 1,000)
+- **Reconnect Time:** 1.66 ms per TLS reconnect cycle (50 cycles)
 
 ## Workspace Structure
 
@@ -97,7 +99,7 @@ Typical results on modern hardware (loopback TLS):
 crates/
 ├── farbus-protocol/  # Bounded wire formats (FarBus control plane + USB/IP 1.1)
 ├── farbus-core/      # Identity, TLS 1.3, state machines, USB inventory, USB/IP proxy
-├── farbus-server/    # Linux server binary with sysfs scanning & mDNS/UDP beacon
+├── farbus-server/    # Linux server binary with sysfs scanning & UDP discovery beacon
 ├── farbus-client/    # Cross-platform CLI client with session persistence & pairing
 └── farbus-bench/     # Automated performance & latency measurement tool
 ```
@@ -107,6 +109,7 @@ crates/
 - **No Remote Plaintext:** Standard USB/IP traffic is confined to localhost (`127.0.0.1`); all remote network hops require TLS 1.3.
 - **Fail-Closed Framing:** Parsers reject oversized buffers, unknown protocol versions, bad magics, and malformed strings.
 - **No Passwords on CLI:** PINs are read from the terminal interactively and hashed with constant-time equality checks.
+- **Session Files:** `~/.config/farbus` is created mode `0700`; tokens are files mode `0600`.
 - **Zero Unsafe:** `#![forbid(unsafe_code)]` enabled across the entire workspace.
 
 ## License

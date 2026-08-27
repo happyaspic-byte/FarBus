@@ -64,6 +64,14 @@ fn save_identity(
 ) -> std::io::Result<()> {
     let dir = identity_dir()?;
     fs::create_dir_all(&dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+        if let Some(parent) = dir.parent() {
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        }
+    }
     let cert_path = dir.join("cert.der");
     let key_path = dir.join("key.der");
     fs::write(&cert_path, cert.as_ref())?;

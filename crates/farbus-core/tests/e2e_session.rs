@@ -84,9 +84,7 @@ async fn server_session_e2e_full_lifecycle() {
     // 3. List Devices
     write_message(
         &mut client,
-        &Message::DeviceList(farbus_protocol::DeviceList {
-            devices: Vec::new(),
-        }),
+        &Message::DeviceListRequest(farbus_protocol::DeviceListRequest { auth_token: token }),
     )
     .await
     .unwrap();
@@ -147,9 +145,10 @@ async fn server_session_e2e_full_lifecycle() {
     // 6. Detach
     write_message(
         &mut client,
-        &Message::Detach {
+        &Message::DetachRequest(farbus_protocol::DetachRequest {
             device_id: DeviceId(1),
-        },
+            auth_token: token,
+        }),
     )
     .await
     .unwrap();

@@ -13,6 +13,15 @@ fn pairing_pin_rejects_after_five_failures() {
 }
 
 #[test]
+fn pairing_pin_is_single_use_on_success() {
+    let fp = PeerFingerprint::new([4; 32]);
+    let mut pin = PairingPin::issue(fp);
+    let correct = hash_pin(&pin.pin, fp);
+    assert!(pin.is_valid(&correct));
+    assert!(!pin.is_valid(&correct));
+}
+
+#[test]
 fn pairing_pin_accepts_correct_hash_within_budget() {
     let fp = PeerFingerprint::new([3; 32]);
     let mut pin = PairingPin::issue(fp);

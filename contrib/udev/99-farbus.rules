@@ -1,0 +1,3 @@
+# Allow FarBus to access USB devices when run as a dedicated user.
+# Install: sudo cp contrib/udev/99-farbus.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+SUBSYSTEM=="usb", MODE="0660", GROUP="plugdev"

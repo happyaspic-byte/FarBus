@@ -81,12 +81,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Scenario::BulkThroughput => {
-            let chunks = 2_000u32;
-            let chunk_size = 512u32;
+            let chunks = 1_000u32;
+            let chunk_size = 16_384u32;
+            let payload = vec![0u8; chunk_size as usize];
             let start = Instant::now();
             for seq in 0..chunks {
                 let _ = client
-                    .urb(device, seq, 0x81, TransferType::Bulk, vec![0u8; 64])
+                    .urb(device, seq, 1, TransferType::Bulk, payload.clone())
                     .await?;
             }
             let elapsed = start.elapsed();

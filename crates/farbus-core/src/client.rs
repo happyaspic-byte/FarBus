@@ -3,8 +3,8 @@ use crate::frame::{read_message, write_message, FrameError};
 use crate::identity::{hash_pin, Identity};
 use crate::tls::make_pinned_client_config;
 use farbus_protocol::{
-    AttachRequest, AttachResponse, DeviceId, DeviceList, Hello, Message, PairRequest, PairResponse,
-    TransferType, UrbComplete, UrbSubmit, VERSION,
+    AttachRequest, AttachResponse, DetachRequest, DeviceId, DeviceList, DeviceListRequest, Hello,
+    Message, PairRequest, PairResponse, TransferType, UrbComplete, UrbSubmit, VERSION,
 };
 use rustls::pki_types::ServerName;
 use std::net::SocketAddr;
@@ -143,15 +143,15 @@ impl FarBusClient {
     ///
     /// Returns framing errors on disconnect.
     pub async fn devices(&mut self) -> Result<DeviceList, ClientError> {
+        let token = self.auth_token.ok_or(ClientError::PairRejected)?;
         write_message(
             &mut self.stream,
-            &Message::DeviceList(DeviceList {
-                devices: Vec::new(),
-            }),
+            &Message::DeviceListRequest(DeviceListRequest { auth_token: token }),
         )
         .await?;
         match read_message(&mut self.stream).await? {
             Message::DeviceList(list) => Ok(list),
+            Message::Error { .. } => Err(ClientError::AttachRejected),
             _ => Err(ClientError::Unexpected),
         }
     }
@@ -184,7 +184,15 @@ impl FarBusClient {
     ///
     /// Returns framing errors on disconnect.
     pub async fn detach(&mut self, device_id: DeviceId) -> Result<(), ClientError> {
-        write_message(&mut self.stream, &Message::Detach { device_id }).await?;
+        let token = self.auth_token.ok_or(ClientError::PairRejected)?;
+        write_message(
+            &mut self.stream,
+            &Message::DetachRequest(DetachRequest {
+                device_id,
+                auth_token: token,
+            }),
+        )
+        .await?;
         match read_message(&mut self.stream).await? {
             Message::Detach { .. } => Ok(()),
             _ => Err(ClientError::Unexpected),

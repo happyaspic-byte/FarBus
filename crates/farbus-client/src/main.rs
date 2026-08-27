@@ -65,7 +65,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let devices = client.devices().await?.devices;
             let locals = devices
                 .into_iter()
-                .map(|info| farbus_core::LocalDevice { info })
+                .map(|info| farbus_core::LocalDevice {
+                    info,
+                    backend: farbus_core::DeviceBackend::Emulated,
+                })
                 .collect();
             println!(
                 "Attached device {} ({}) through TLS 1.3.",

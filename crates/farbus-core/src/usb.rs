@@ -2,9 +2,16 @@ use farbus_protocol::{DeviceId, DeviceInfo, UsbSpeed};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceBackend {
+    Emulated,
+    Host,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalDevice {
     pub info: DeviceInfo,
+    pub backend: DeviceBackend,
 }
 
 pub fn parse_sysfs_device(dir: &Path, id: DeviceId) -> Option<LocalDevice> {
@@ -41,6 +48,7 @@ pub fn parse_sysfs_device(dir: &Path, id: DeviceId) -> Option<LocalDevice> {
             product,
             exported: false,
         },
+        backend: DeviceBackend::Host,
     })
 }
 
@@ -90,6 +98,7 @@ pub fn simulated_lab_devices() -> Vec<LocalDevice> {
                 product: "USB Keyboard".into(),
                 exported: true,
             },
+            backend: DeviceBackend::Emulated,
         },
         LocalDevice {
             info: DeviceInfo {
@@ -102,6 +111,7 @@ pub fn simulated_lab_devices() -> Vec<LocalDevice> {
                 product: "FT232 Serial".into(),
                 exported: true,
             },
+            backend: DeviceBackend::Emulated,
         },
         LocalDevice {
             info: DeviceInfo {
@@ -114,6 +124,7 @@ pub fn simulated_lab_devices() -> Vec<LocalDevice> {
                 product: "USB Disk".into(),
                 exported: true,
             },
+            backend: DeviceBackend::Emulated,
         },
     ]
 }

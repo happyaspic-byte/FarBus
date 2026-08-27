@@ -39,3 +39,13 @@ jobs:
       - uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  bench:
+    name: Loopback benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo run --release -p farbus-bench -- --scenario control-latency
+      - run: cargo run --release -p farbus-bench -- --scenario bulk-throughput
+      - run: cargo run --release -p farbus-bench -- --scenario reconnect

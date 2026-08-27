@@ -24,8 +24,9 @@ pub mod usbip_proxy;
 pub use client::{ClientError, FarBusClient};
 pub use discovery::{decode_beacon, encode_beacon};
 pub use farbus_protocol::{
-    AttachRequest, AttachResponse, DeviceId, DeviceInfo, DeviceList, ErrorCode, Hello, Message,
-    PairRequest, PairResponse, TransferType, UrbComplete, UrbSubmit, UsbSpeed, VERSION,
+    AttachRequest, AttachResponse, DetachRequest, DeviceId, DeviceInfo, DeviceList,
+    DeviceListRequest, ErrorCode, Hello, Message, PairRequest, PairResponse, TransferType,
+    UrbComplete, UrbSubmit, UsbSpeed, VERSION,
 };
 pub use fingerprint::{FingerprintError, PeerFingerprint};
 pub use frame::{read_message, write_message, FrameError};
@@ -44,6 +45,9 @@ pub use state::{ConnectionEvent, ConnectionMachine, ConnectionState, TransitionE
 pub use store::{load_session, save_session, StoredSession};
 pub use tls::{make_pinned_client_config, make_self_signed, make_server_config, TlsError};
 pub use urb::complete_urb;
-pub use usb::{parse_sysfs_device, scan_host_usb, scan_sysfs, simulated_lab_devices, LocalDevice};
+pub use usb::{
+    parse_sysfs_device, scan_host_usb, scan_sysfs, simulated_lab_devices, DeviceBackend,
+    LocalDevice,
+};
 pub use usbip_forward::serve_usbip_forward;
 pub use usbip_proxy::{encode_device_header, handle_client, serve_usbip_loopback};

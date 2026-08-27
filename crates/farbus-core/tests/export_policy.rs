@@ -25,6 +25,7 @@ async fn unexported_physical_device_cannot_be_attached() {
             product: "Hidden HID".into(),
             exported: false,
         },
+        backend: farbus_core::DeviceBackend::Host,
     });
     let state = Arc::new(ServerState::new("farbus-server".into(), server_fp, devices));
     let pin = state.pin.lock().await.pin.clone();

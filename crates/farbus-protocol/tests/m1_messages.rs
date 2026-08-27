@@ -1,6 +1,6 @@
 use farbus_protocol::{
-    decode, encode, AttachRequest, AttachResponse, DeviceId, Message, PairRequest, PairResponse,
-    TransferType, UrbComplete, UrbSubmit,
+    decode, encode, AttachRequest, AttachResponse, DetachRequest, DeviceId, DeviceListRequest,
+    Message, PairRequest, PairResponse, TransferType, UrbComplete, UrbSubmit,
 };
 
 #[test]
@@ -51,4 +51,21 @@ fn roundtrips_urb_submit_and_complete() {
     });
     assert_eq!(decode(&encode(&submit).unwrap()).unwrap(), submit);
     assert_eq!(decode(&encode(&complete).unwrap()).unwrap(), complete);
+}
+
+#[test]
+fn roundtrips_device_list_request() {
+    let req = Message::DeviceListRequest(DeviceListRequest {
+        auth_token: [0xCC; 32],
+    });
+    assert_eq!(decode(&encode(&req).unwrap()).unwrap(), req);
+}
+
+#[test]
+fn roundtrips_detach_request() {
+    let req = Message::DetachRequest(DetachRequest {
+        device_id: DeviceId(7),
+        auth_token: [0xDD; 32],
+    });
+    assert_eq!(decode(&encode(&req).unwrap()).unwrap(), req);
 }

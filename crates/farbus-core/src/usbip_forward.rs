@@ -139,6 +139,9 @@ async fn forward_urbs(
             ep if ep & 0x80 != 0 && cmd.transfer_buffer_length <= 64 => TransferType::Interrupt,
             _ => TransferType::Bulk,
         };
+        if cmd.transfer_buffer_length as usize > 65_536 {
+            break;
+        }
         let mut data = Vec::new();
         if cmd.direction == 0 && cmd.transfer_buffer_length > 0 {
             data.resize(cmd.transfer_buffer_length as usize, 0);

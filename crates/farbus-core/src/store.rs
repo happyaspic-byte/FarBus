@@ -18,6 +18,11 @@ pub struct StoredSession {
 pub fn save_session(session: &StoredSession) -> std::io::Result<()> {
     let dir = config_dir()?;
     fs::create_dir_all(&dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    }
     let mut token_hex = String::new();
     for b in session.auth_token {
         use std::fmt::Write;

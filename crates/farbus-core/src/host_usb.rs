@@ -1,7 +1,7 @@
 #![cfg(target_os = "linux")]
 
 use crate::urb::complete_urb;
-use crate::usb::LocalDevice;
+use crate::usb::{DeviceBackend, LocalDevice};
 use farbus_protocol::{DeviceId, DeviceInfo, TransferType, UrbComplete, UrbSubmit, UsbSpeed};
 use rusb::{Context, DeviceHandle, UsbContext};
 use std::time::Duration;
@@ -42,6 +42,7 @@ pub fn scan_libusb() -> Vec<LocalDevice> {
                 product,
                 exported: false,
             },
+            backend: DeviceBackend::Host,
         });
         id += 1;
     }
@@ -51,14 +52,28 @@ pub fn scan_libusb() -> Vec<LocalDevice> {
 /// Completes an URB on a real USB device when possible; otherwise uses the emulator.
 #[must_use]
 pub fn complete_host_or_emulated(submit: &UrbSubmit, devices: &[LocalDevice]) -> UrbComplete {
-    match try_host(submit, devices) {
-        Some(complete) => complete,
-        None => complete_urb(submit),
+    if let Some(complete) = try_host(submit, devices) {
+        complete
+    } else {
+        let emulated = devices.iter().any(|device| {
+            device.info.id == submit.device_id && device.backend == DeviceBackend::Emulated
+        });
+        if emulated {
+            complete_urb(submit)
+        } else {
+            UrbComplete {
+                seq: submit.seq,
+                status: -1,
+                data: Vec::new(),
+            }
+        }
     }
 }
 
 fn try_host(submit: &UrbSubmit, devices: &[LocalDevice]) -> Option<UrbComplete> {
-    let device = devices.iter().find(|d| d.info.id == submit.device_id)?;
+    let device = devices.iter().find(|d| {
+        d.info.id == submit.device_id && d.info.exported && d.backend == DeviceBackend::Host
+    })?;
     let (bus, addr) = parse_bus_addr(&device.info.bus_id)?;
     let ctx = Context::new().ok()?;
     let list = ctx.devices().ok()?;
@@ -100,7 +115,7 @@ fn control<T: UsbContext>(
     let request = submit.data[1];
     let value = u16::from_le_bytes([submit.data[2], submit.data[3]]);
     let index = u16::from_le_bytes([submit.data[4], submit.data[5]]);
-    let w_length = usize::from(u16::from_le_bytes([submit.data[6], submit.data[7]]));
+    let w_length = usize::from(u16::from_le_bytes([submit.data[6], submit.data[7]])).min(65_536);
     let dir_in = request_type & 0x80 != 0;
     if dir_in {
         let mut buf = vec![0u8; w_length.max(1)];
@@ -139,14 +154,18 @@ fn bulk<T: UsbContext>(
     timeout: Duration,
 ) -> UrbComplete {
     if submit.endpoint & 0x80 != 0 {
-        let mut buf = vec![0u8; submit.data.len().max(512)];
+        let mut buf = vec![0u8; submit.data.len().clamp(1, 65_536)];
         match handle.read_bulk(submit.endpoint, &mut buf, timeout) {
             Ok(n) => UrbComplete {
                 seq: submit.seq,
                 status: 0,
                 data: buf[..n].to_vec(),
             },
-            Err(_) => complete_urb(submit),
+            Err(_) => UrbComplete {
+                seq: submit.seq,
+                status: -1,
+                data: Vec::new(),
+            },
         }
     } else {
         match handle.write_bulk(submit.endpoint, &submit.data, timeout) {
@@ -155,7 +174,11 @@ fn bulk<T: UsbContext>(
                 status: 0,
                 data: Vec::new(),
             },
-            Err(_) => complete_urb(submit),
+            Err(_) => UrbComplete {
+                seq: submit.seq,
+                status: -1,
+                data: Vec::new(),
+            },
         }
     }
 }
@@ -173,7 +196,11 @@ fn interrupt<T: UsbContext>(
                 status: 0,
                 data: buf[..n].to_vec(),
             },
-            Err(_) => complete_urb(submit),
+            Err(_) => UrbComplete {
+                seq: submit.seq,
+                status: -1,
+                data: Vec::new(),
+            },
         }
     } else {
         match handle.write_interrupt(submit.endpoint, &submit.data, timeout) {
@@ -182,7 +209,11 @@ fn interrupt<T: UsbContext>(
                 status: 0,
                 data: Vec::new(),
             },
-            Err(_) => complete_urb(submit),
+            Err(_) => UrbComplete {
+                seq: submit.seq,
+                status: -1,
+                data: Vec::new(),
+            },
         }
     }
 }

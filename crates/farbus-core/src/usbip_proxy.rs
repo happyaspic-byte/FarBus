@@ -58,7 +58,12 @@ pub fn encode_device_header(device: &LocalDevice) -> Vec<u8> {
 /// # Errors
 ///
 /// Returns I/O errors when the peer disconnects mid-frame.
-pub async fn handle_client(
+pub async fn handle_client(stream: TcpStream, devices: Vec<LocalDevice>) -> std::io::Result<()> {
+    let devices: Vec<_> = devices.into_iter().filter(|d| d.info.exported).collect();
+    handle_client_filtered(stream, devices).await
+}
+
+async fn handle_client_filtered(
     mut stream: TcpStream,
     devices: Vec<LocalDevice>,
 ) -> std::io::Result<()> {
@@ -136,6 +141,9 @@ async fn serve_urbs(stream: &mut TcpStream, device_id: DeviceId) -> std::io::Res
             ep if ep & 0x80 != 0 && cmd.transfer_buffer_length <= 64 => TransferType::Interrupt,
             _ => TransferType::Bulk,
         };
+        if cmd.transfer_buffer_length as usize > 65_536 {
+            break;
+        }
         let mut data = Vec::new();
         if cmd.direction == 0 && cmd.transfer_buffer_length > 0 {
             data.resize(cmd.transfer_buffer_length as usize, 0);

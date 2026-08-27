@@ -66,6 +66,12 @@ pub struct AttachRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetachRequest {
+    pub device_id: DeviceId,
+    pub auth_token: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachResponse {
     pub device_id: DeviceId,
     pub success: bool,
@@ -107,11 +113,18 @@ pub struct DeviceList {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceListRequest {
+    pub auth_token: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     Hello(Hello),
     Error { code: ErrorCode, detail: String },
     Detach { device_id: DeviceId },
+    DetachRequest(DetachRequest),
     DeviceList(DeviceList),
+    DeviceListRequest(DeviceListRequest),
     PairRequest(PairRequest),
     PairResponse(PairResponse),
     AttachRequest(AttachRequest),
@@ -131,13 +144,17 @@ impl Message {
     pub const ATTACH_RESPONSE_TYPE: u8 = 8;
     pub const URB_SUBMIT_TYPE: u8 = 9;
     pub const URB_COMPLETE_TYPE: u8 = 10;
+    pub const DEVICE_LIST_REQUEST_TYPE: u8 = 11;
+    pub const DETACH_REQUEST_TYPE: u8 = 12;
 
     fn ty(&self) -> u8 {
         match self {
             Self::Hello(_) => Self::HELLO_TYPE,
             Self::Error { .. } => Self::ERROR_TYPE,
             Self::Detach { .. } => Self::DETACH_TYPE,
+            Self::DetachRequest(_) => Self::DETACH_REQUEST_TYPE,
             Self::DeviceList(_) => Self::DEVICE_LIST_TYPE,
+            Self::DeviceListRequest(_) => Self::DEVICE_LIST_REQUEST_TYPE,
             Self::PairRequest(_) => Self::PAIR_REQUEST_TYPE,
             Self::PairResponse(_) => Self::PAIR_RESPONSE_TYPE,
             Self::AttachRequest(_) => Self::ATTACH_REQUEST_TYPE,
@@ -175,6 +192,7 @@ pub enum Error {
 /// # Errors
 ///
 /// Returns an error when a field or the complete payload exceeds its wire limit.
+#[allow(clippy::too_many_lines)]
 pub fn encode(msg: &Message) -> Result<Vec<u8>, Error> {
     let mut payload = Vec::new();
     match msg {
@@ -190,6 +208,13 @@ pub fn encode(msg: &Message) -> Result<Vec<u8>, Error> {
         }
         Message::Detach { device_id } => {
             payload.extend_from_slice(&device_id.0.to_be_bytes());
+        }
+        Message::DetachRequest(req) => {
+            payload.extend_from_slice(&req.device_id.0.to_be_bytes());
+            payload.extend_from_slice(&req.auth_token);
+        }
+        Message::DeviceListRequest(req) => {
+            payload.extend_from_slice(&req.auth_token);
         }
         Message::DeviceList(list) => {
             let count = u16::try_from(list.devices.len()).map_err(|_| Error::FieldTooLong {
@@ -340,6 +365,22 @@ fn parse_payload(ty: u8, payload: &[u8]) -> Result<Message, Error> {
             let device_id = DeviceId(cur.u32()?);
             cur.finish()?;
             Ok(Message::Detach { device_id })
+        }
+        Message::DETACH_REQUEST_TYPE => {
+            let device_id = DeviceId(cur.u32()?);
+            let mut auth_token = [0u8; 32];
+            cur.read_exact(&mut auth_token)?;
+            cur.finish()?;
+            Ok(Message::DetachRequest(DetachRequest {
+                device_id,
+                auth_token,
+            }))
+        }
+        Message::DEVICE_LIST_REQUEST_TYPE => {
+            let mut auth_token = [0u8; 32];
+            cur.read_exact(&mut auth_token)?;
+            cur.finish()?;
+            Ok(Message::DeviceListRequest(DeviceListRequest { auth_token }))
         }
         Message::DEVICE_LIST_TYPE => {
             let count = usize::from(cur.u16()?);

@@ -18,8 +18,10 @@
 ## Controls
 
 - TLS 1.3 only, ECDSA P-256 self-signed identity, SHA-256 certificate fingerprint pinning, and real handshake signature verification.
-- Six-digit pairing PIN valid for 120 seconds; maximum five verification attempts; constant-time hash comparison.
-- 256-bit random bearer tokens stored with mode `0600` on Unix.
+- Six-digit pairing PIN valid for 120 seconds; one successful use consumes the PIN and rotates it; maximum five failed attempts; constant-time hash comparison.
+- Device list, attach, detach, and URB require a verified bearer token bound to the TLS session principal. Hello fingerprints alone cannot list or detach.
+- 256-bit random bearer tokens stored with mode `0600` on Unix; session directory mode `0700`.
+- USB/IP `transfer_buffer_length` is rejected above 65,536 bytes before allocation.
 - Physical devices default to `exported = false`; `--export-all` is explicit opt-in.
 - HID devices are visible in the list but cannot attach unless explicitly exported.
 - Exclusive per-device leases reject a second client.
