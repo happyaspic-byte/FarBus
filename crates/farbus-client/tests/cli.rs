@@ -21,3 +21,11 @@ fn parses_attach_with_numeric_device_id() {
     let cli = Cli::try_parse_from(["farbus", "attach", &fingerprint, "42"]).unwrap();
     assert!(matches!(cli.command, Command::Attach { device_id: 42, .. }));
 }
+
+#[test]
+fn parses_status_command() {
+    let cli = Cli::try_parse_from(["farbus", "status"]).unwrap();
+    assert!(matches!(cli.command, Command::Status { json: false }));
+    let cli = Cli::try_parse_from(["farbus", "status", "--json"]).unwrap();
+    assert!(matches!(cli.command, Command::Status { json: true }));
+}

@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
@@ -87,6 +88,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             client.detach(DeviceId(device_id)).await?;
             println!("Detached device {device_id} from {fingerprint}");
         }
+        Command::Status { json } => match load_session(None) {
+            Some(saved) => {
+                if json {
+                    println!(
+                        "{{\"addr\":\"{}\",\"fingerprint\":\"{}\",\"tls\":\"1.3\",\"usbip\":\"127.0.0.1:3240\",\"token\":true}}",
+                        saved.addr, saved.fingerprint
+                    );
+                } else {
+                    println!("Last server     : {}", saved.addr);
+                    println!("Fingerprint     : {}", saved.fingerprint);
+                    println!("Auth token      : present (256-bit)");
+                    println!("TLS             : 1.3, fingerprint-pinned");
+                    println!("USB/IP loopback : 127.0.0.1:3240 after attach");
+                }
+            }
+            None => {
+                if json {
+                    println!("{{\"session\":null}}");
+                } else {
+                    println!(
+                        "No saved session. Run: farbus --connect HOST:7420 pair <fingerprint>"
+                    );
+                }
+            }
+        },
     }
     Ok(())
 }

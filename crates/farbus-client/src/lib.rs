@@ -30,4 +30,10 @@ pub enum Command {
         fingerprint: PeerFingerprint,
         device_id: u32,
     },
+    /// Show saved pairing and connection status
+    Status {
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
 }

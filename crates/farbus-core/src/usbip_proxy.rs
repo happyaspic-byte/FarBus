@@ -142,6 +142,8 @@ async fn serve_urbs(stream: &mut TcpStream, device_id: DeviceId) -> std::io::Res
             stream.read_exact(&mut data).await?;
         } else if cmd.ep == 0 {
             data = cmd.setup.to_vec();
+        } else {
+            data.resize(cmd.transfer_buffer_length as usize, 0);
         }
         let complete = complete_urb(&UrbSubmit {
             seq: cmd.seqnum,

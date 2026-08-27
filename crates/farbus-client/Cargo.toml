@@ -7,6 +7,10 @@ repository.workspace = true
 rust-version.workspace = true
 description = "FarBus USB import client"
 
+[[bin]]
+name = "farbus"
+path = "src/main.rs"
+
 [dependencies]
 farbus-core = { path = "../farbus-core" }
 farbus-protocol = { path = "../farbus-protocol" }

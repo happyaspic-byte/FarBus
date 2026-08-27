@@ -24,3 +24,10 @@ fn export_all_is_off_by_default() {
     let cli = Cli::try_parse_from(["farbus-server", "--export-all"]).unwrap();
     assert!(cli.export_all);
 }
+
+#[test]
+fn parses_selective_export_bus_ids() {
+    let cli =
+        Cli::try_parse_from(["farbus-server", "--export", "1-1.2", "--export", "1-2"]).unwrap();
+    assert_eq!(cli.export, vec!["1-1.2", "1-2"]);
+}

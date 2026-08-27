@@ -134,19 +134,38 @@ async fn forward_urbs(
             stream.read_exact(&mut data).await?;
         } else if cmd.ep == 0 {
             data = cmd.setup.to_vec();
+        } else {
+            data.resize(cmd.transfer_buffer_length as usize, 0);
         }
         let complete = {
             let mut farbus = client.lock().await;
-            farbus
+            let first = farbus
                 .urb(
                     device_id,
                     cmd.seqnum,
                     u8::try_from(cmd.ep).unwrap_or(0),
                     transfer,
-                    data,
+                    data.clone(),
                 )
-                .await
-                .map_err(|err| std::io::Error::other(err.to_string()))?
+                .await;
+            if let Ok(complete) = first {
+                complete
+            } else {
+                farbus
+                    .reconnect()
+                    .await
+                    .map_err(|err| std::io::Error::other(err.to_string()))?;
+                farbus
+                    .urb(
+                        device_id,
+                        cmd.seqnum,
+                        u8::try_from(cmd.ep).unwrap_or(0),
+                        transfer,
+                        data,
+                    )
+                    .await
+                    .map_err(|err| std::io::Error::other(err.to_string()))?
+            }
         };
         let ret = UsbipRetSubmit {
             seqnum: cmd.seqnum,

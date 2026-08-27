@@ -24,6 +24,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             device.info.exported = true;
         }
     }
+    if !cli.export.is_empty() {
+        for device in &mut devices {
+            if cli.export.iter().any(|bus| bus == &device.info.bus_id) {
+                device.info.exported = true;
+            }
+        }
+    }
     let exported = devices.iter().filter(|d| d.info.exported).count();
 
     let hostname = hostname::get().map_or_else(

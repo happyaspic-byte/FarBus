@@ -32,6 +32,8 @@ pub struct FarBusClient {
     stream: TlsStream<TcpStream>,
     identity: Identity,
     pub auth_token: Option<[u8; 32]>,
+    addr: SocketAddr,
+    expected: PeerFingerprint,
 }
 
 impl FarBusClient {
@@ -53,9 +55,24 @@ impl FarBusClient {
             stream,
             identity,
             auth_token: None,
+            addr,
+            expected,
         };
         client.hello().await?;
         Ok(client)
+    }
+
+    /// Reopens the TLS session, preserving the bearer token.
+    ///
+    /// # Errors
+    ///
+    /// Returns I/O or TLS errors when the handshake fails.
+    pub async fn reconnect(&mut self) -> Result<(), ClientError> {
+        let token = self.auth_token;
+        let mut next = Self::connect(self.addr, self.expected).await?;
+        next.auth_token = token;
+        *self = next;
+        Ok(())
     }
 
     #[must_use]

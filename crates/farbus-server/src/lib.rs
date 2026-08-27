@@ -10,4 +10,7 @@ pub struct Cli {
     /// Export every discovered USB device. Off by default.
     #[arg(long, default_value_t = false)]
     pub export_all: bool,
+    /// Export a specific bus id (repeatable), e.g. --export 1-1.2
+    #[arg(long = "export")]
+    pub export: Vec<String>,
 }
