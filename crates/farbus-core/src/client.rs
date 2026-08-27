@@ -62,17 +62,20 @@ impl FarBusClient {
         Ok(client)
     }
 
-    /// Reopens the TLS session, preserving the bearer token.
+    /// Reopens the TLS session, preserving the bearer token and client identity.
     ///
     /// # Errors
     ///
     /// Returns I/O or TLS errors when the handshake fails.
     pub async fn reconnect(&mut self) -> Result<(), ClientError> {
-        let token = self.auth_token;
-        let mut next = Self::connect(self.addr, self.expected).await?;
-        next.auth_token = token;
-        *self = next;
-        Ok(())
+        let connector = make_pinned_client_config(self.expected).map_err(|_| ClientError::Tls)?;
+        let tcp = TcpStream::connect(self.addr).await?;
+        let name = ServerName::try_from("farbus.local").map_err(|_| ClientError::Tls)?;
+        self.stream = connector
+            .connect(name, tcp)
+            .await
+            .map_err(|_| ClientError::Tls)?;
+        self.hello().await
     }
 
     #[must_use]

@@ -88,6 +88,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             client.detach(DeviceId(device_id)).await?;
             println!("Detached device {device_id} from {fingerprint}");
         }
+        Command::Diagnose { fingerprint } => {
+            let saved = load_session(Some(fingerprint)).ok_or("run 'farbus pair' first")?;
+            println!("Server address  : {}", saved.addr);
+            println!("Fingerprint     : {}", saved.fingerprint);
+            let start = std::time::Instant::now();
+            let mut client = farbus_core::happy_eyeballs_connect([saved.addr], fingerprint).await?;
+            let latency = start.elapsed();
+            println!("TLS 1.3         : OK ({latency:?})");
+            client = client.with_auth_token(saved.auth_token);
+            let devices = client.devices().await?;
+            println!("Auth token      : OK");
+            println!("Exported devices: {}", devices.devices.len());
+            println!("USB/IP loopback : available after 'farbus attach'");
+        }
         Command::Status { json } => match load_session(None) {
             Some(saved) => {
                 if json {

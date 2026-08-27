@@ -10,6 +10,7 @@ pub mod host_usb;
 pub mod identity;
 pub mod lease;
 pub mod path;
+pub mod persist;
 pub mod reconnect;
 pub mod session;
 pub mod state;
@@ -36,6 +37,7 @@ pub use identity::{
 };
 pub use lease::{LeaseBook, LeaseError};
 pub use path::connection_order;
+pub use persist::load_or_create_server_identity;
 pub use reconnect::{connect_with_retry, ReconnectPolicy};
 pub use session::{serve_session, ServerState};
 pub use state::{ConnectionEvent, ConnectionMachine, ConnectionState, TransitionError};

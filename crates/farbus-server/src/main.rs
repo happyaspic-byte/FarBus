@@ -1,7 +1,7 @@
 use clap::Parser;
 use farbus_core::{
-    discovery, make_self_signed, make_server_config, scan_host_usb, serve_session,
-    serve_usbip_loopback, simulated_lab_devices, ServerState,
+    discovery, make_server_config, scan_host_usb, serve_session, serve_usbip_loopback,
+    simulated_lab_devices, ServerState,
 };
 use farbus_server::Cli;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use tokio::net::TcpListener;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
-    let (certs, key, server_fp) = make_self_signed("farbus.local")?;
+    let (certs, key, server_fp) = farbus_core::load_or_create_server_identity("farbus.local")?;
     let acceptor = make_server_config(certs, key)?;
 
     let mut devices = scan_host_usb();

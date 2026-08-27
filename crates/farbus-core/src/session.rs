@@ -10,6 +10,7 @@ use farbus_protocol::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 
@@ -18,7 +19,7 @@ pub struct ServerState {
     pub fingerprint: PeerFingerprint,
     pub pin: Mutex<PairingPin>,
     pub leases: Mutex<LeaseBook>,
-    pub tokens: Mutex<HashMap<[u8; 32], PeerFingerprint>>,
+    pub tokens: Mutex<HashMap<[u8; 32], (PeerFingerprint, Instant)>>,
     pub devices: Vec<LocalDevice>,
 }
 
@@ -86,11 +87,13 @@ where
                 let success = pin.is_valid(&req.pin_hash);
                 let token = if success {
                     let token = issue_auth_token();
-                    state
-                        .tokens
-                        .lock()
-                        .await
-                        .insert(token, PeerFingerprint::new(req.client_fingerprint));
+                    state.tokens.lock().await.insert(
+                        token,
+                        (
+                            PeerFingerprint::new(req.client_fingerprint),
+                            Instant::now() + Duration::from_secs(24 * 60 * 60),
+                        ),
+                    );
                     token
                 } else {
                     [0u8; 32]
@@ -110,7 +113,7 @@ where
             }
             Message::AttachRequest(req) => {
                 let tokens = state.tokens.lock().await;
-                let Some(owner) = tokens.get(&req.auth_token).copied() else {
+                let Some((owner, expires)) = tokens.get(&req.auth_token).copied() else {
                     write_message(
                         stream,
                         &Message::Error {
@@ -121,6 +124,17 @@ where
                     .await?;
                     continue;
                 };
+                if Instant::now() > expires {
+                    write_message(
+                        stream,
+                        &Message::Error {
+                            code: ErrorCode::Unauthorized,
+                            detail: "expired token".into(),
+                        },
+                    )
+                    .await?;
+                    continue;
+                }
                 drop(tokens);
                 let device = state
                     .devices

@@ -23,6 +23,13 @@ fn parses_attach_with_numeric_device_id() {
 }
 
 #[test]
+fn parses_diagnose_command() {
+    let fingerprint = "22".repeat(32);
+    let cli = Cli::try_parse_from(["farbus", "diagnose", &fingerprint]).unwrap();
+    assert!(matches!(cli.command, Command::Diagnose { .. }));
+}
+
+#[test]
 fn parses_status_command() {
     let cli = Cli::try_parse_from(["farbus", "status"]).unwrap();
     assert!(matches!(cli.command, Command::Status { json: false }));
