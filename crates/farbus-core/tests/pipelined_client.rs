@@ -80,3 +80,45 @@ async fn farbus_client_later_urb_completes_without_waiting_for_slow_earlier_urb(
     assert_eq!(second.seq, 1);
     assert_eq!(second.status, 0);
 }
+
+#[tokio::test]
+async fn cloned_client_follows_reconnect_onto_shared_pump() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let (certs, key, server_fp) = make_self_signed("farbus.local").unwrap();
+    let acceptor = make_server_config(certs, key).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let state = Arc::new(ServerState::new(
+        "farbus-server".into(),
+        server_fp,
+        simulated_lab_devices(),
+    ));
+    let pin = state.pin.lock().await.pin.clone();
+    tokio::spawn({
+        let state = Arc::clone(&state);
+        async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let acceptor = acceptor.clone();
+                let state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    if let Ok(mut tls) = acceptor.accept(stream).await {
+                        let _ = serve_session(&mut tls, state).await;
+                    }
+                });
+            }
+        }
+    });
+
+    let mut client = FarBusClient::connect(addr, server_fp).await.unwrap();
+    client.pair(&pin, server_fp).await.unwrap();
+    client.attach(DeviceId(1)).await.unwrap();
+    let clone = client.clone();
+    client.reconnect().await.unwrap();
+    clone.attach(DeviceId(1)).await.unwrap();
+    let complete = clone
+        .urb(DeviceId(1), 3, 0x81, TransferType::Interrupt, vec![0; 8])
+        .await
+        .unwrap();
+    assert_eq!(complete.seq, 3);
+    assert_eq!(complete.status, 0);
+}

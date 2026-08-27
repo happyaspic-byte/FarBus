@@ -116,3 +116,105 @@ async fn later_urb_completes_without_waiting_for_slow_earlier_urb() {
     drop(client_io);
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn session_does_not_deadlock_when_many_urbs_complete_together() {
+    let server_fp = farbus_core::fingerprint::PeerFingerprint::new([1u8; 32]);
+    let client_fp = farbus_core::fingerprint::PeerFingerprint::new([2u8; 32]);
+    let completer: farbus_core::session::UrbCompleter = Arc::new(|urb| {
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            complete_urb(&urb)
+        })
+    });
+    let state = Arc::new(
+        ServerState::new("test-server".into(), server_fp, simulated_lab_devices())
+            .with_urb_completer(completer),
+    );
+    let pin = state.pin.lock().await.pin.clone();
+    let (mut client_io, mut server_io) = duplex(1024 * 1024);
+    let server_state = Arc::clone(&state);
+    let server = tokio::spawn(async move {
+        let _ = serve_session(&mut server_io, server_state).await;
+    });
+
+    farbus_core::frame::write_message(
+        &mut client_io,
+        &Message::Hello(Hello {
+            protocol_min: VERSION,
+            protocol_max: VERSION,
+            fingerprint: *client_fp.as_bytes(),
+            hostname: "client".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    let _ = farbus_core::frame::read_message(&mut client_io)
+        .await
+        .unwrap();
+
+    farbus_core::frame::write_message(
+        &mut client_io,
+        &Message::PairRequest(PairRequest {
+            client_fingerprint: *client_fp.as_bytes(),
+            pin_hash: farbus_core::identity::hash_pin(&pin, server_fp),
+            client_name: "client".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    let token = match farbus_core::frame::read_message(&mut client_io)
+        .await
+        .unwrap()
+    {
+        Message::PairResponse(response) if response.success => response.auth_token,
+        other => panic!("pairing failed: {other:?}"),
+    };
+
+    farbus_core::frame::write_message(
+        &mut client_io,
+        &Message::AttachRequest(AttachRequest {
+            device_id: DeviceId(1),
+            auth_token: token,
+        }),
+    )
+    .await
+    .unwrap();
+    let _ = farbus_core::frame::read_message(&mut client_io)
+        .await
+        .unwrap();
+
+    let count = 200u32;
+    for seq in 1..=count {
+        farbus_core::frame::write_message(
+            &mut client_io,
+            &Message::UrbSubmit(UrbSubmit {
+                seq,
+                device_id: DeviceId(1),
+                endpoint: 0x81,
+                transfer: TransferType::Interrupt,
+                data: vec![0; 8],
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let mut seen = 0u32;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while seen < count {
+            match farbus_core::frame::read_message(&mut client_io)
+                .await
+                .unwrap()
+            {
+                Message::UrbComplete(_) => seen += 1,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("session deadlocked draining URB completions");
+
+    drop(client_io);
+    let _ = server.await;
+}

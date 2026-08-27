@@ -10,7 +10,6 @@ use farbus_protocol::{
 use rustls::pki_types::ServerName;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::io::split;
@@ -18,6 +17,8 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tokio_rustls::client::TlsStream;
+
+const LEASE_DENIED: i32 = -13;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -52,15 +53,18 @@ enum ClientCmd {
     },
 }
 
+struct ClientInner {
+    cmd_tx: Mutex<mpsc::Sender<ClientCmd>>,
+    pump_task: Mutex<Option<JoinHandle<()>>>,
+}
+
 #[derive(Clone)]
 pub struct FarBusClient {
-    cmd_tx: mpsc::Sender<ClientCmd>,
+    inner: Arc<ClientInner>,
     identity: Identity,
     auth_token: Option<[u8; 32]>,
     addr: SocketAddr,
     expected: PeerFingerprint,
-    pump_task: Arc<Mutex<Option<JoinHandle<()>>>>,
-    closed: Arc<AtomicBool>,
 }
 
 impl FarBusClient {
@@ -92,24 +96,25 @@ impl FarBusClient {
         expected: PeerFingerprint,
     ) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel::<ClientCmd>(256);
-        let closed = Arc::new(AtomicBool::new(false));
-        let closed_clone = Arc::clone(&closed);
         let pump = tokio::spawn(async move {
-            run_client_pump(stream, cmd_rx, closed_clone).await;
+            run_client_pump(stream, cmd_rx).await;
         });
 
         Self {
-            cmd_tx,
+            inner: Arc::new(ClientInner {
+                cmd_tx: Mutex::new(cmd_tx),
+                pump_task: Mutex::new(Some(pump)),
+            }),
             identity,
             auth_token,
             addr,
             expected,
-            pump_task: Arc::new(Mutex::new(Some(pump))),
-            closed,
         }
     }
 
     /// Reopens the TLS session, preserving the bearer token and client identity.
+    ///
+    /// All clones share the I/O pump, so reconnect replaces it for every handle.
     ///
     /// # Errors
     ///
@@ -125,15 +130,14 @@ impl FarBusClient {
             .map_err(|_| ClientError::Tls)?;
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<ClientCmd>(256);
-        let closed = Arc::new(AtomicBool::new(false));
-        let closed_clone = Arc::clone(&closed);
         let pump = tokio::spawn(async move {
-            run_client_pump(stream, cmd_rx, closed_clone).await;
+            run_client_pump(stream, cmd_rx).await;
         });
 
-        self.cmd_tx = cmd_tx;
-        self.closed = closed;
-        *self.pump_task.lock().await = Some(pump);
+        if let Some(old) = self.inner.pump_task.lock().await.replace(pump) {
+            old.abort();
+        }
+        *self.inner.cmd_tx.lock().await = cmd_tx;
         self.hello().await
     }
 
@@ -148,20 +152,23 @@ impl FarBusClient {
         self.auth_token
     }
 
+    async fn send_cmd(&self, cmd: ClientCmd) -> Result<(), ClientError> {
+        let tx = self.inner.cmd_tx.lock().await.clone();
+        tx.send(cmd).await.map_err(|_| ClientError::Closed)
+    }
+
     async fn hello(&self) -> Result<(), ClientError> {
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(ClientCmd::Control {
-                msg: Message::Hello(Hello {
-                    protocol_min: VERSION,
-                    protocol_max: VERSION,
-                    fingerprint: *self.identity.fingerprint.as_bytes(),
-                    hostname: "farbus-client".into(),
-                }),
-                reply: reply_tx,
-            })
-            .await
-            .map_err(|_| ClientError::Closed)?;
+        self.send_cmd(ClientCmd::Control {
+            msg: Message::Hello(Hello {
+                protocol_min: VERSION,
+                protocol_max: VERSION,
+                fingerprint: *self.identity.fingerprint.as_bytes(),
+                hostname: "farbus-client".into(),
+            }),
+            reply: reply_tx,
+        })
+        .await?;
 
         match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::Hello(_) => Ok(()),
@@ -176,17 +183,15 @@ impl FarBusClient {
     /// Returns [`ClientError::PairRejected`] when the PIN is invalid.
     pub async fn pair(&mut self, pin: &str, server: PeerFingerprint) -> Result<(), ClientError> {
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(ClientCmd::Control {
-                msg: Message::PairRequest(PairRequest {
-                    client_fingerprint: *self.identity.fingerprint.as_bytes(),
-                    pin_hash: hash_pin(pin, server),
-                    client_name: "farbus-client".into(),
-                }),
-                reply: reply_tx,
-            })
-            .await
-            .map_err(|_| ClientError::Closed)?;
+        self.send_cmd(ClientCmd::Control {
+            msg: Message::PairRequest(PairRequest {
+                client_fingerprint: *self.identity.fingerprint.as_bytes(),
+                pin_hash: hash_pin(pin, server),
+                client_name: "farbus-client".into(),
+            }),
+            reply: reply_tx,
+        })
+        .await?;
 
         match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::PairResponse(PairResponse {
@@ -210,13 +215,11 @@ impl FarBusClient {
     pub async fn devices(&self) -> Result<DeviceList, ClientError> {
         let token = self.auth_token.ok_or(ClientError::PairRejected)?;
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(ClientCmd::Control {
-                msg: Message::DeviceListRequest(DeviceListRequest { auth_token: token }),
-                reply: reply_tx,
-            })
-            .await
-            .map_err(|_| ClientError::Closed)?;
+        self.send_cmd(ClientCmd::Control {
+            msg: Message::DeviceListRequest(DeviceListRequest { auth_token: token }),
+            reply: reply_tx,
+        })
+        .await?;
 
         match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::DeviceList(list) => Ok(list),
@@ -233,16 +236,14 @@ impl FarBusClient {
     pub async fn attach(&self, device_id: DeviceId) -> Result<AttachResponse, ClientError> {
         let token = self.auth_token.ok_or(ClientError::PairRejected)?;
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(ClientCmd::Control {
-                msg: Message::AttachRequest(AttachRequest {
-                    device_id,
-                    auth_token: token,
-                }),
-                reply: reply_tx,
-            })
-            .await
-            .map_err(|_| ClientError::Closed)?;
+        self.send_cmd(ClientCmd::Control {
+            msg: Message::AttachRequest(AttachRequest {
+                device_id,
+                auth_token: token,
+            }),
+            reply: reply_tx,
+        })
+        .await?;
 
         match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::AttachResponse(res) if res.success => Ok(res),
@@ -259,16 +260,14 @@ impl FarBusClient {
     pub async fn detach(&self, device_id: DeviceId) -> Result<(), ClientError> {
         let token = self.auth_token.ok_or(ClientError::PairRejected)?;
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(ClientCmd::Control {
-                msg: Message::DetachRequest(DetachRequest {
-                    device_id,
-                    auth_token: token,
-                }),
-                reply: reply_tx,
-            })
-            .await
-            .map_err(|_| ClientError::Closed)?;
+        self.send_cmd(ClientCmd::Control {
+            msg: Message::DetachRequest(DetachRequest {
+                device_id,
+                auth_token: token,
+            }),
+            reply: reply_tx,
+        })
+        .await?;
 
         match reply_rx.await.map_err(|_| ClientError::Closed)?? {
             Message::Detach { .. } => Ok(()),
@@ -283,15 +282,18 @@ impl FarBusClient {
     /// Returns framing errors on disconnect.
     pub async fn unlink(&self, device_id: DeviceId, seq: u32) -> Result<i32, ClientError> {
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(ClientCmd::Unlink {
-                unlink: UrbUnlink { seq, device_id },
-                reply: reply_tx,
-            })
-            .await
-            .map_err(|_| ClientError::Closed)?;
+        self.send_cmd(ClientCmd::Unlink {
+            unlink: UrbUnlink { seq, device_id },
+            reply: reply_tx,
+        })
+        .await?;
 
-        reply_rx.await.map_err(|_| ClientError::Closed)?
+        let status = reply_rx.await.map_err(|_| ClientError::Closed)??;
+        if status == LEASE_DENIED {
+            Err(ClientError::AttachRejected)
+        } else {
+            Ok(status)
+        }
     }
 
     /// Submits one URB and waits for completion in parallel with other in-flight requests.
@@ -308,30 +310,29 @@ impl FarBusClient {
         data: Vec<u8>,
     ) -> Result<UrbComplete, ClientError> {
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(ClientCmd::Urb {
-                urb: UrbSubmit {
-                    seq,
-                    device_id,
-                    endpoint,
-                    transfer,
-                    data,
-                },
-                reply: reply_tx,
-            })
-            .await
-            .map_err(|_| ClientError::Closed)?;
+        self.send_cmd(ClientCmd::Urb {
+            urb: UrbSubmit {
+                seq,
+                device_id,
+                endpoint,
+                transfer,
+                data,
+            },
+            reply: reply_tx,
+        })
+        .await?;
 
-        reply_rx.await.map_err(|_| ClientError::Closed)?
+        let complete = reply_rx.await.map_err(|_| ClientError::Closed)??;
+        if complete.status == LEASE_DENIED {
+            Err(ClientError::AttachRejected)
+        } else {
+            Ok(complete)
+        }
     }
 }
 
 #[allow(clippy::too_many_lines)]
-async fn run_client_pump(
-    stream: TlsStream<TcpStream>,
-    mut cmd_rx: mpsc::Receiver<ClientCmd>,
-    closed: Arc<AtomicBool>,
-) {
+async fn run_client_pump(stream: TlsStream<TcpStream>, mut cmd_rx: mpsc::Receiver<ClientCmd>) {
     let (mut reader_half, mut writer_half) = split(stream);
     let mut framed_reader = FramedReader::new();
     let mut pending_urbs: HashMap<u32, oneshot::Sender<Result<UrbComplete, ClientError>>> =
@@ -390,13 +391,6 @@ async fn run_client_pump(
                     Message::Error { .. } => {
                         if let Some(reply) = control_replies.pop_front() {
                             let _ = reply.send(Ok(msg));
-                        } else {
-                            for (_, reply) in pending_urbs.drain() {
-                                let _ = reply.send(Err(ClientError::AttachRejected));
-                            }
-                            for (_, reply) in pending_unlinks.drain() {
-                                let _ = reply.send(Err(ClientError::AttachRejected));
-                            }
                         }
                     }
                     other => {
@@ -409,7 +403,6 @@ async fn run_client_pump(
         }
     }
 
-    closed.store(true, Ordering::SeqCst);
     while let Some(r) = control_replies.pop_front() {
         let _ = r.send(Err(ClientError::Closed));
     }
