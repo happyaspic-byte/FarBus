@@ -1,8 +1,11 @@
 use farbus_protocol::{DeviceId, DeviceInfo, UsbInterfaceInfo, UsbSpeed};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeviceBackend {
     Emulated,
     Host,
@@ -12,6 +15,142 @@ pub enum DeviceBackend {
 pub struct LocalDevice {
     pub info: DeviceInfo,
     pub backend: DeviceBackend,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DeviceKey {
+    backend: DeviceBackend,
+    bus_id: String,
+    vid: u16,
+    pid: u16,
+}
+
+impl From<&LocalDevice> for DeviceKey {
+    fn from(device: &LocalDevice) -> Self {
+        Self {
+            backend: device.backend,
+            bus_id: device.info.bus_id.clone(),
+            vid: device.info.vid,
+            pid: device.info.pid,
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct InventoryDelta {
+    pub added: Vec<DeviceId>,
+    pub removed: Vec<DeviceId>,
+}
+
+#[derive(Debug)]
+pub struct DeviceInventory {
+    present: BTreeMap<u32, LocalDevice>,
+    known_ids: HashMap<DeviceKey, DeviceId>,
+    presence: HashMap<u32, Arc<AtomicBool>>,
+    next_id: u32,
+}
+
+impl DeviceInventory {
+    #[must_use]
+    pub fn new(devices: Vec<LocalDevice>) -> Self {
+        let mut inventory = Self {
+            present: BTreeMap::new(),
+            known_ids: HashMap::new(),
+            presence: HashMap::new(),
+            next_id: 1,
+        };
+        for mut device in devices {
+            let key = DeviceKey::from(&device);
+            let requested = device.info.id;
+            let id = if requested.0 != 0 && !inventory.present.contains_key(&requested.0) {
+                inventory.next_id = inventory.next_id.max(requested.0.saturating_add(1));
+                requested
+            } else {
+                inventory.allocate_id()
+            };
+            device.info.id = id;
+            inventory.known_ids.insert(key, id);
+            inventory
+                .presence
+                .insert(id.0, Arc::new(AtomicBool::new(true)));
+            inventory.present.insert(id.0, device);
+        }
+        inventory
+    }
+
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<LocalDevice> {
+        self.present.values().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn get(&self, id: DeviceId) -> Option<LocalDevice> {
+        self.present.get(&id.0).cloned()
+    }
+
+    #[must_use]
+    pub fn presence_token(&self, id: DeviceId) -> Option<Arc<AtomicBool>> {
+        self.presence.get(&id.0).cloned()
+    }
+
+    pub fn refresh_hosts(&mut self, scanned: Vec<LocalDevice>) -> InventoryDelta {
+        let old_host_ids: Vec<DeviceId> = self
+            .present
+            .values()
+            .filter(|device| device.backend == DeviceBackend::Host)
+            .map(|device| device.info.id)
+            .collect();
+        let mut new_ids = Vec::new();
+        let mut next_hosts = Vec::new();
+
+        for mut device in scanned {
+            let key = DeviceKey::from(&device);
+            let id = if let Some(id) = self.known_ids.get(&key).copied() {
+                id
+            } else {
+                let id = self.allocate_id();
+                self.known_ids.insert(key, id);
+                id
+            };
+            device.info.id = id;
+            if !self.present.contains_key(&id.0) {
+                new_ids.push(id);
+            }
+            next_hosts.push((id, device));
+        }
+
+        let next_set: std::collections::HashSet<u32> =
+            next_hosts.iter().map(|(id, _)| id.0).collect();
+        let removed: Vec<DeviceId> = old_host_ids
+            .into_iter()
+            .filter(|id| !next_set.contains(&id.0))
+            .collect();
+        for id in &removed {
+            if let Some(device) = self.present.remove(&id.0) {
+                self.known_ids.remove(&DeviceKey::from(&device));
+            }
+            if let Some(token) = self.presence.remove(&id.0) {
+                token.store(false, Ordering::Release);
+            }
+        }
+        for (id, device) in next_hosts {
+            self.presence
+                .entry(id.0)
+                .or_insert_with(|| Arc::new(AtomicBool::new(true)));
+            self.present.insert(id.0, device);
+        }
+
+        InventoryDelta {
+            added: new_ids,
+            removed,
+        }
+    }
+
+    fn allocate_id(&mut self) -> DeviceId {
+        let id = DeviceId(self.next_id);
+        self.next_id = self.next_id.saturating_add(1);
+        id
+    }
 }
 
 pub fn parse_sysfs_device(dir: &Path, id: DeviceId) -> Option<LocalDevice> {
@@ -81,14 +220,39 @@ pub fn scan_sysfs(root: &Path) -> Vec<LocalDevice> {
 
 #[must_use]
 pub fn scan_host_usb() -> Vec<LocalDevice> {
+    try_scan_host_usb().unwrap_or_default()
+}
+
+/// Scans host USB devices while distinguishing an empty bus from a scan failure.
+///
+/// # Errors
+///
+/// Returns an I/O error when neither libusb nor sysfs inventory can be read.
+pub fn try_scan_host_usb() -> std::io::Result<Vec<LocalDevice>> {
     #[cfg(target_os = "linux")]
     {
-        let libusb = crate::host_usb::scan_libusb();
-        if !libusb.is_empty() {
-            return libusb;
+        if let Ok(libusb) = crate::host_usb::try_scan_libusb() {
+            return Ok(libusb);
         }
     }
-    scan_sysfs(&PathBuf::from("/sys/bus/usb/devices"))
+    scan_sysfs_result(&PathBuf::from("/sys/bus/usb/devices"))
+}
+
+fn scan_sysfs_result(root: &Path) -> std::io::Result<Vec<LocalDevice>> {
+    let entries = fs::read_dir(root)?;
+    let mut devices = Vec::new();
+    let mut next_id = 1u32;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if let Some(device) = parse_sysfs_device(&path, DeviceId(next_id)) {
+            devices.push(device);
+            next_id += 1;
+        }
+    }
+    Ok(devices)
 }
 
 #[must_use]

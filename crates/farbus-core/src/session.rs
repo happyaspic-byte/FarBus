@@ -3,9 +3,7 @@ use crate::frame::{write_message, FrameError, FramedReader};
 use crate::identity::{issue_auth_token, PairingPin};
 use crate::lease::LeaseBook;
 use crate::urb::complete_urb;
-#[cfg(target_os = "linux")]
-use crate::usb::DeviceBackend;
-use crate::usb::LocalDevice;
+use crate::usb::{DeviceBackend, DeviceInventory, InventoryDelta, LocalDevice};
 use farbus_protocol::{
     AttachResponse, DeviceList, ErrorCode, Hello, Message, PairResponse, UrbComplete, UrbSubmit,
     UrbUnlinked, VERSION,
@@ -13,10 +11,11 @@ use farbus_protocol::{
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{split, AsyncRead, AsyncWrite};
-use tokio::sync::{mpsc, Mutex, Semaphore};
+use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 
 const MAX_IN_FLIGHT_URBS: usize = 64;
 
@@ -29,7 +28,7 @@ pub struct ServerState {
     pub pin: Mutex<PairingPin>,
     pub leases: Mutex<LeaseBook>,
     pub tokens: Mutex<HashMap<[u8; 32], (PeerFingerprint, Instant)>>,
-    pub devices: Vec<LocalDevice>,
+    pub devices: RwLock<DeviceInventory>,
     pub urb_completer: Option<UrbCompleter>,
 }
 
@@ -42,7 +41,7 @@ impl ServerState {
             fingerprint,
             leases: Mutex::new(LeaseBook::default()),
             tokens: Mutex::new(HashMap::new()),
-            devices,
+            devices: RwLock::new(DeviceInventory::new(devices)),
             urb_completer: None,
         }
     }
@@ -53,16 +52,31 @@ impl ServerState {
         self
     }
 
-    #[must_use]
-    pub fn device_list(&self) -> DeviceList {
+    pub async fn device_list(&self) -> DeviceList {
         DeviceList {
             devices: self
                 .devices
-                .iter()
-                .filter(|d| d.info.exported)
-                .map(|d| d.info.clone())
+                .read()
+                .await
+                .snapshot()
+                .into_iter()
+                .filter(|device| device.info.exported)
+                .map(|device| device.info)
                 .collect(),
         }
+    }
+
+    pub async fn devices_snapshot(&self) -> Vec<LocalDevice> {
+        self.devices.read().await.snapshot()
+    }
+
+    pub async fn refresh_host_devices(&self, devices: Vec<LocalDevice>) -> InventoryDelta {
+        let mut inventory = self.devices.write().await;
+        let delta = inventory.refresh_hosts(devices);
+        if !delta.removed.is_empty() {
+            self.leases.lock().await.release_devices(&delta.removed);
+        }
+        delta
     }
 }
 
@@ -164,7 +178,7 @@ where
                     drop(tokens);
                     *reader_principal.lock().await = Some(owner);
                     let _ = out_tx
-                        .send(Message::DeviceList(reader_state.device_list()))
+                        .send(Message::DeviceList(reader_state.device_list().await))
                         .await;
                 }
                 Message::DeviceList(_) => {
@@ -184,12 +198,12 @@ where
                     }
                     drop(tokens);
                     *reader_principal.lock().await = Some(owner);
-                    let device = reader_state
-                        .devices
-                        .iter()
-                        .find(|d| d.info.id == req.device_id && d.info.exported)
-                        .cloned();
+                    let inventory = reader_state.devices.read().await;
+                    let device = inventory
+                        .get(req.device_id)
+                        .filter(|device| device.info.exported);
                     let Some(device) = device else {
+                        drop(inventory);
                         let _ = send_error(&out_tx, ErrorCode::NotFound, "unknown device").await;
                         continue;
                     };
@@ -205,6 +219,7 @@ where
                         .await
                         .acquire(req.device_id, owner)
                         .is_ok();
+                    drop(inventory);
                     let _ = out_tx
                         .send(Message::AttachResponse(AttachResponse {
                             device_id: req.device_id,
@@ -272,6 +287,21 @@ where
                         continue;
                     }
 
+                    let presence = reader_state
+                        .devices
+                        .read()
+                        .await
+                        .presence_token(urb.device_id);
+                    let Some(presence) = presence else {
+                        let _ = out_tx
+                            .send(Message::UrbComplete(UrbComplete {
+                                seq: urb.seq,
+                                status: -1,
+                                data: Vec::new(),
+                            }))
+                            .await;
+                        continue;
+                    };
                     let Ok(permit) = Arc::clone(&urb_slots).acquire_owned().await else {
                         let _ = out_tx
                             .send(Message::UrbComplete(UrbComplete {
@@ -285,7 +315,7 @@ where
                     let tx = out_tx.clone();
                     let task_state = Arc::clone(&reader_state);
                     tokio::spawn(async move {
-                        let complete = complete_session_urb(urb, task_state).await;
+                        let complete = complete_session_urb(urb, task_state, presence).await;
                         drop(permit);
                         let _ = tx.send(Message::UrbComplete(complete)).await;
                     });
@@ -337,34 +367,65 @@ async fn send_error(
     .await
 }
 
-async fn complete_session_urb(urb: UrbSubmit, state: Arc<ServerState>) -> UrbComplete {
-    if let Some(ref custom) = state.urb_completer {
-        return custom(urb).await;
+async fn complete_session_urb(
+    urb: UrbSubmit,
+    state: Arc<ServerState>,
+    presence: Arc<AtomicBool>,
+) -> UrbComplete {
+    if !presence.load(Ordering::Acquire) {
+        return failed_urb(urb.seq);
     }
+    if let Some(ref custom) = state.urb_completer {
+        let seq = urb.seq;
+        let complete = custom(urb).await;
+        return if presence.load(Ordering::Acquire) {
+            complete
+        } else {
+            failed_urb(seq)
+        };
+    }
+
+    let devices = state.devices_snapshot().await;
+    let backend = devices
+        .iter()
+        .find(|device| device.info.id == urb.device_id)
+        .map(|device| device.backend);
 
     #[cfg(target_os = "linux")]
-    {
-        let host = state
-            .devices
-            .iter()
-            .any(|device| device.info.id == urb.device_id && device.backend == DeviceBackend::Host);
-        if host {
-            let devices = state.devices.clone();
-            let submitted = urb.clone();
-            return match tokio::task::spawn_blocking(move || {
+    if backend == Some(DeviceBackend::Host) {
+        let submitted = urb.clone();
+        let result = match tokio::task::spawn_blocking({
+            let presence = Arc::clone(&presence);
+            move || {
+                if !presence.load(Ordering::Acquire) {
+                    return failed_urb(submitted.seq);
+                }
                 crate::host_usb::complete_host_or_emulated(&submitted, &devices)
-            })
-            .await
-            {
-                Ok(result) => result,
-                Err(_) => UrbComplete {
-                    seq: urb.seq,
-                    status: -1,
-                    data: Vec::new(),
-                },
-            };
-        }
+            }
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => failed_urb(urb.seq),
+        };
+        return if presence.load(Ordering::Acquire) {
+            result
+        } else {
+            failed_urb(urb.seq)
+        };
     }
 
-    complete_urb(&urb)
+    if backend == Some(DeviceBackend::Emulated) {
+        complete_urb(&urb)
+    } else {
+        failed_urb(urb.seq)
+    }
+}
+
+fn failed_urb(seq: u32) -> UrbComplete {
+    UrbComplete {
+        seq,
+        status: -1,
+        data: Vec::new(),
+    }
 }

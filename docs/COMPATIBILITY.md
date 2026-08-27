@@ -7,16 +7,16 @@
 | Linux server, TLS 1.3 control/data plane | Supported |
 | Linux physical USB via libusb (`rusb`, vendored) | Supported for control, bulk, interrupt |
 | Linux sysfs inventory fallback | Supported |
-| Simulated lab devices when no USB hardware is present | Supported |
 | Windows/Linux USB/IP 1.1 client against `127.0.0.1:3240` | Supported (`usbip-win2`, Linux `usbip`) |
 | IPv6-first dual stack with IPv4 fallback | Supported |
 | PIN pairing, one-use PIN rotation, bearer tokens, exclusive leases | Supported |
 | Authenticated device list / attach / detach / URB | Supported |
 | Multi-interface composite USB devices (interface enumeration & endpoint routing) | Supported |
+| Linux USB hotplug polling (stable topology IDs, lease revocation on removal) | Supported |
 | Non-blocking pipelined URB submits & cancel-safe framed stream decoding | Supported |
 | USB/IP transfer length cap (65,536 bytes) | Supported |
 | USB/IP UNLINK (structured RET_UNLINK; physical rusb cancel is timeout-bounded) | Supported |
-| Automatic TLS reconnect and lease re-attach | Supported |
+| Explicit TLS reconnect and lease re-attach API | Supported |
 
 ## Experimental
 
@@ -26,6 +26,8 @@
 - Timing-sensitive game controllers and security dongles
 
 Loopback bulk benchmarks measure sequential URB round-trips over one TLS session. They are a transport ceiling, not physical USB throughput; the session accepts multiple in-flight URBs and emits completions as each finishes.
+
+Physical hotplug inventory refreshes every two seconds through strict libusb scans. FarBus DeviceList and each new server-side or client-forwarded USB/IP management connection query the current inventory. Device IDs stay stable while a device remains present; removal retires the ID, and replug receives a new ID. IDs are not persisted across restarts. A failed in-flight USB/IP request receives a terminal error and is not blindly replayed.
 
 ## Not supported
 

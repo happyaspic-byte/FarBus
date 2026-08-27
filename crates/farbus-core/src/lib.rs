@@ -32,7 +32,7 @@ pub use fingerprint::{FingerprintError, PeerFingerprint};
 pub use frame::{read_message, write_message, FrameError, FramedReader};
 pub use happy::happy_eyeballs_connect;
 #[cfg(target_os = "linux")]
-pub use host_usb::{complete_host_or_emulated, scan_libusb};
+pub use host_usb::{complete_host_or_emulated, scan_libusb, try_scan_libusb};
 pub use identity::{
     constant_time_eq, fingerprint_from_secret, hash_pin, issue_auth_token, Identity, PairingPin,
 };
@@ -46,8 +46,10 @@ pub use store::{load_session, save_session, StoredSession};
 pub use tls::{make_pinned_client_config, make_self_signed, make_server_config, TlsError};
 pub use urb::complete_urb;
 pub use usb::{
-    parse_sysfs_device, scan_host_usb, scan_sysfs, simulated_lab_devices, DeviceBackend,
-    LocalDevice,
+    parse_sysfs_device, scan_host_usb, scan_sysfs, simulated_lab_devices, try_scan_host_usb,
+    DeviceBackend, DeviceInventory, InventoryDelta, LocalDevice,
 };
 pub use usbip_forward::serve_usbip_forward;
-pub use usbip_proxy::{encode_device_header, handle_client, serve_usbip_loopback};
+pub use usbip_proxy::{
+    encode_device_header, handle_client, serve_usbip_loopback, serve_usbip_loopback_state,
+};

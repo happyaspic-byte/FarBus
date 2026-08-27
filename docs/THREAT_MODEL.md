@@ -23,7 +23,7 @@
 - 256-bit random bearer tokens stored with mode `0600` on Unix; session directory mode `0700`.
 - USB/IP `transfer_buffer_length` is rejected above 65,536 bytes before allocation.
 - Physical devices default to `exported = false`. Broad `--export-all` excludes HID, mass-storage, hubs, and composite devices containing those interfaces.
-- Sensitive devices require an exact repeated `--export BUS-ID`; unmatched selectors fail startup.
+- Sensitive devices require an exact repeated `--export BUS-ID`. A selector may name a currently unplugged topology and is applied when that device appears.
 - Exclusive per-device leases reject a second client.
 - Protocol frames cap payloads at 65,536 bytes and reject unknown versions, invalid enum values, truncated frames, malformed UTF-8, and trailing payload bytes.
 - Each TLS session permits at most 64 concurrent in-flight URBs; additional reads receive backpressure until a slot completes.
@@ -38,6 +38,7 @@
 - PIN pairing authenticates physical possession/display access, not a centralized user identity.
 - Isochronous transfers remain unsupported by the physical backend.
 - USB/IP `UNLINK` is decoded into a structured `UsbipRetUnlink` and forwarded as a FarBus `UrbUnlink` on the TLS session. Safe `rusb` 0.9 has no in-flight transfer cancel API, so an already-running physical libusb call still runs until its 500 ms timeout.
+- Hotplug polling uses strict libusb enumeration with physical topology plus VID:PID, revokes leases, invalidates queued URBs when removal is observed, and preserves inventory on scan failure. Startup-only sysfs fallback can still omit entries whose attributes are unreadable. An identical replacement cannot be distinguished without a serial number.
 - Session and identity files are written to a mode-restricted temp file and renamed into place. Windows does not use DPAPI.
 - Network latency can violate USB device timing expectations.
 

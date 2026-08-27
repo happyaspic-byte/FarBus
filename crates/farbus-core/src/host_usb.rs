@@ -10,18 +10,21 @@ use std::time::Duration;
 
 #[must_use]
 pub fn scan_libusb() -> Vec<LocalDevice> {
-    let Ok(ctx) = Context::new() else {
-        return Vec::new();
-    };
-    let Ok(list) = ctx.devices() else {
-        return Vec::new();
-    };
+    try_scan_libusb().unwrap_or_default()
+}
+
+/// Enumerates libusb devices, distinguishing an empty bus from a backend failure.
+///
+/// # Errors
+///
+/// Returns libusb errors when context creation or enumeration fails.
+pub fn try_scan_libusb() -> rusb::Result<Vec<LocalDevice>> {
+    let ctx = Context::new()?;
+    let list = ctx.devices()?;
     let mut out = Vec::new();
     let mut id = 1u32;
     for device in list.iter() {
-        let Ok(desc) = device.device_descriptor() else {
-            continue;
-        };
+        let desc = device.device_descriptor()?;
         let speed = match device.speed() {
             rusb::Speed::Low => UsbSpeed::Low,
             rusb::Speed::Full => UsbSpeed::Full,
@@ -33,10 +36,14 @@ pub fn scan_libusb() -> Vec<LocalDevice> {
             .ok()
             .and_then(|h| h.read_product_string_ascii(&desc).ok())
             .unwrap_or_else(|| format!("{:04x}:{:04x}", desc.vendor_id(), desc.product_id()));
+        let ports = device.port_numbers()?;
+        if ports.is_empty() {
+            continue;
+        }
         out.push(LocalDevice {
             info: DeviceInfo {
                 id: DeviceId(id),
-                bus_id: format!("{}-{}", device.bus_number(), device.address()),
+                bus_id: topology_bus_id(device.bus_number(), &ports),
                 vid: desc.vendor_id(),
                 pid: desc.product_id(),
                 usb_class: desc.class_code(),
@@ -49,7 +56,7 @@ pub fn scan_libusb() -> Vec<LocalDevice> {
         });
         id += 1;
     }
-    out
+    Ok(out)
 }
 
 /// Completes an URB on a real USB device when possible; otherwise uses the emulator.
@@ -77,12 +84,19 @@ fn try_host(submit: &UrbSubmit, devices: &[LocalDevice]) -> Option<UrbComplete> 
     let device = devices.iter().find(|d| {
         d.info.id == submit.device_id && d.info.exported && d.backend == DeviceBackend::Host
     })?;
-    let (bus, addr) = parse_bus_addr(&device.info.bus_id)?;
     let ctx = Context::new().ok()?;
     let list = ctx.devices().ok()?;
-    let usb_dev = list
-        .iter()
-        .find(|d| d.bus_number() == bus && d.address() == addr)?;
+    let usb_dev = list.iter().find(|candidate| {
+        let Ok(desc) = candidate.device_descriptor() else {
+            return false;
+        };
+        let Ok(ports) = candidate.port_numbers() else {
+            return false;
+        };
+        desc.vendor_id() == device.info.vid
+            && desc.product_id() == device.info.pid
+            && topology_bus_id(candidate.bus_number(), &ports) == device.info.bus_id
+    })?;
     let handle = usb_dev.open().ok()?;
     let _ = handle.set_auto_detach_kernel_driver(true);
     let iface = interface_for_endpoint(&device.info.interfaces, submit.endpoint).unwrap_or(0);
@@ -128,11 +142,13 @@ fn interface_for_endpoint(ifaces: &[UsbInterfaceInfo], endpoint: u8) -> Option<u
         .or_else(|| ifaces.first().map(|iface| iface.interface_number))
 }
 
-fn parse_bus_addr(bus_id: &str) -> Option<(u8, u8)> {
-    let mut parts = bus_id.split('-');
-    let bus = parts.next()?.parse().ok()?;
-    let addr = parts.next()?.parse().ok()?;
-    Some((bus, addr))
+fn topology_bus_id(bus: u8, ports: &[u8]) -> String {
+    let path = ports
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(".");
+    format!("{bus}-{path}")
 }
 
 fn control<T: UsbContext>(
@@ -247,5 +263,16 @@ fn interrupt<T: UsbContext>(
                 data: Vec::new(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::topology_bus_id;
+
+    #[test]
+    fn formats_stable_usb_topology_path() {
+        assert_eq!(topology_bus_id(1, &[2]), "1-2");
+        assert_eq!(topology_bus_id(3, &[1, 4, 2]), "3-1.4.2");
     }
 }

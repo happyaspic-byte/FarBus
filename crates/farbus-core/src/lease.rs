@@ -61,4 +61,10 @@ impl LeaseBook {
     pub fn release_all(&mut self, peer: PeerFingerprint) {
         self.owners.retain(|_, owner| *owner != peer);
     }
+
+    /// Drops leases for devices that are no longer present.
+    pub fn release_devices(&mut self, devices: &[DeviceId]) {
+        self.owners
+            .retain(|device, _| !devices.iter().any(|removed| removed == device));
+    }
 }

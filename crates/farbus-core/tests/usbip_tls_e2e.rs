@@ -1,6 +1,6 @@
 use farbus_core::{
-    make_self_signed, make_server_config, serve_session, simulated_lab_devices, FarBusClient,
-    ServerState,
+    make_self_signed, make_server_config, serve_session, simulated_lab_devices, DeviceBackend,
+    DeviceId, DeviceInfo, FarBusClient, LocalDevice, ServerState, UsbSpeed,
 };
 use farbus_protocol::usbip::{
     UsbipCmdSubmit, UsbipRetSubmit, OP_REP_DEVLIST, OP_REP_IMPORT, OP_REQ_DEVLIST, OP_REQ_IMPORT,
@@ -144,4 +144,30 @@ async fn full_end_to_end_usbip_over_tls_proxy() {
     assert_eq!(desc[1], 1); // Device Descriptor
     assert_eq!(desc[8], 0x6d); // Logitech VID
     assert_eq!(desc[9], 0x04);
+
+    server_state
+        .refresh_host_devices(vec![LocalDevice {
+            info: DeviceInfo {
+                id: DeviceId(0),
+                bus_id: "5-2".into(),
+                vid: 0x0403,
+                pid: 0x6001,
+                usb_class: 0xff,
+                speed: UsbSpeed::Full,
+                product: "Hotplug Serial".into(),
+                exported: true,
+                interfaces: Vec::new(),
+            },
+            backend: DeviceBackend::Host,
+        }])
+        .await;
+
+    let mut refreshed_tool = TcpStream::connect(local_usbip_addr).await.unwrap();
+    refreshed_tool.write_all(&req).await.unwrap();
+    let mut refreshed_hdr = [0u8; 12];
+    refreshed_tool.read_exact(&mut refreshed_hdr).await.unwrap();
+    assert_eq!(
+        u32::from_be_bytes(refreshed_hdr[8..12].try_into().unwrap()),
+        5
+    );
 }

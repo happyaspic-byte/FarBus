@@ -11,39 +11,24 @@ fn parse_loopback_addr(value: &str) -> Result<SocketAddr, String> {
     Ok(addr)
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum ExportPolicyError {
-    #[error("requested USB bus id not found: {0}")]
-    NotFound(String),
-}
-
 /// Applies explicit export selectors after a conservative broad-export pass.
-///
-/// # Errors
-///
-/// Returns [`ExportPolicyError::NotFound`] when an exact selector matches no device.
 pub fn apply_export_policy(
     devices: &mut [farbus_core::LocalDevice],
     export_all: bool,
     exact_bus_ids: &[String],
-) -> Result<(), ExportPolicyError> {
-    for device in devices.iter_mut() {
-        device.info.exported = false;
-        if export_all && !is_sensitive(device) {
-            device.info.exported = true;
-        }
-    }
+) {
+    apply_export_flags(devices, export_all, exact_bus_ids);
+}
 
-    for bus_id in exact_bus_ids {
-        let Some(device) = devices
-            .iter_mut()
-            .find(|device| device.info.bus_id == *bus_id)
-        else {
-            return Err(ExportPolicyError::NotFound(bus_id.clone()));
-        };
-        device.info.exported = true;
+pub fn apply_export_flags(
+    devices: &mut [farbus_core::LocalDevice],
+    export_all: bool,
+    exact_bus_ids: &[String],
+) {
+    for device in devices.iter_mut() {
+        device.info.exported =
+            exact_bus_ids.contains(&device.info.bus_id) || (export_all && !is_sensitive(device));
     }
-    Ok(())
 }
 
 fn is_sensitive(device: &farbus_core::LocalDevice) -> bool {
@@ -52,6 +37,7 @@ fn is_sensitive(device: &farbus_core::LocalDevice) -> bool {
     const HUB: u8 = 9;
     let sensitive = |class| matches!(class, HID | MASS_STORAGE | HUB);
     sensitive(device.info.usb_class)
+        || (device.info.usb_class == 0 && device.info.interfaces.is_empty())
         || device
             .info
             .interfaces

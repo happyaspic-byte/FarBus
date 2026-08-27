@@ -64,7 +64,7 @@ async fn handle_forward(
     devices: Vec<LocalDevice>,
     client: Arc<Mutex<FarBusClient>>,
 ) -> std::io::Result<()> {
-    let devices: Vec<_> = devices.into_iter().filter(|d| d.info.exported).collect();
+    let fallback_devices: Vec<_> = devices.into_iter().filter(|d| d.info.exported).collect();
     loop {
         let mut header = [0u8; 8];
         if stream.read_exact(&mut header).await.is_err() {
@@ -77,6 +77,7 @@ async fn handle_forward(
         }
         match command {
             OP_REQ_DEVLIST => {
+                let devices = live_forward_devices(&client, &fallback_devices).await;
                 let mut reply = Vec::new();
                 reply.extend_from_slice(&USBIP_VERSION.to_be_bytes());
                 reply.extend_from_slice(&OP_REP_DEVLIST.to_be_bytes());
@@ -100,6 +101,7 @@ async fn handle_forward(
                 stream.write_all(&reply).await?;
             }
             OP_REQ_IMPORT => {
+                let devices = live_forward_devices(&client, &fallback_devices).await;
                 let mut busid = [0u8; 32];
                 stream.read_exact(&mut busid).await?;
                 let requested = std::str::from_utf8(&busid)
@@ -134,6 +136,25 @@ async fn handle_forward(
         }
     }
     Ok(())
+}
+
+async fn live_forward_devices(
+    client: &Arc<Mutex<FarBusClient>>,
+    _fallback: &[LocalDevice],
+) -> Vec<LocalDevice> {
+    let farbus = client.lock().await.clone();
+    farbus.devices().await.map_or_else(
+        |_| Vec::new(),
+        |list| {
+            list.devices
+                .into_iter()
+                .map(|info| LocalDevice {
+                    info,
+                    backend: crate::usb::DeviceBackend::Emulated,
+                })
+                .collect()
+        },
+    )
 }
 
 enum OutgoingUsbip {
@@ -216,41 +237,21 @@ async fn forward_urbs(
         let client = Arc::clone(client);
         let out_tx = out_tx.clone();
         tokio::spawn(async move {
-            let complete = {
-                let farbus = client.lock().await.clone();
-                let first = farbus
-                    .urb(
-                        device_id,
-                        cmd.seqnum,
-                        u8::try_from(cmd.ep).unwrap_or(0),
-                        transfer,
-                        data.clone(),
-                    )
-                    .await;
-                if let Ok(complete) = first {
-                    complete
-                } else {
-                    let mut lock = client.lock().await;
-                    if lock.reconnect().await.is_err() || lock.attach(device_id).await.is_err() {
-                        return;
-                    }
-                    let reconnected = lock.clone();
-                    drop(lock);
-                    match reconnected
-                        .urb(
-                            device_id,
-                            cmd.seqnum,
-                            u8::try_from(cmd.ep).unwrap_or(0),
-                            transfer,
-                            data,
-                        )
-                        .await
-                    {
-                        Ok(comp) => comp,
-                        Err(_) => return,
-                    }
-                }
-            };
+            let farbus = client.lock().await.clone();
+            let complete = farbus
+                .urb(
+                    device_id,
+                    cmd.seqnum,
+                    u8::try_from(cmd.ep).unwrap_or(0),
+                    transfer,
+                    data,
+                )
+                .await
+                .unwrap_or_else(|_| farbus_protocol::UrbComplete {
+                    seq: cmd.seqnum,
+                    status: -1,
+                    data: Vec::new(),
+                });
             let ret = UsbipRetSubmit {
                 seqnum: cmd.seqnum,
                 devid: cmd.devid,

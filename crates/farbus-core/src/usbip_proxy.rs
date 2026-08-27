@@ -231,6 +231,36 @@ async fn serve_urbs(stream: TcpStream, device_id: DeviceId) -> std::io::Result<(
 ///
 /// Returns bind errors when port 3240 is already in use.
 pub async fn serve_usbip_loopback(devices: Vec<LocalDevice>, addr: &str) -> std::io::Result<()> {
+    let listener = bind_loopback(addr).await?;
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let devices = devices.clone();
+        tokio::spawn(async move {
+            let _ = handle_client(stream, devices).await;
+        });
+    }
+}
+
+/// Starts a loopback USB/IP listener backed by the server's live hotplug inventory.
+///
+/// # Errors
+///
+/// Returns bind errors or rejects non-loopback addresses.
+pub async fn serve_usbip_loopback_state(
+    state: std::sync::Arc<crate::session::ServerState>,
+    addr: &str,
+) -> std::io::Result<()> {
+    let listener = bind_loopback(addr).await?;
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let devices = state.devices_snapshot().await;
+        tokio::spawn(async move {
+            let _ = handle_client(stream, devices).await;
+        });
+    }
+}
+
+async fn bind_loopback(addr: &str) -> std::io::Result<TcpListener> {
     let listen: std::net::SocketAddr = addr
         .parse()
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid address"))?;
@@ -240,12 +270,5 @@ pub async fn serve_usbip_loopback(devices: Vec<LocalDevice>, addr: &str) -> std:
             "USB/IP listener must use a loopback address",
         ));
     }
-    let listener = TcpListener::bind(listen).await?;
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let devices = devices.clone();
-        tokio::spawn(async move {
-            let _ = handle_client(stream, devices).await;
-        });
-    }
+    TcpListener::bind(listen).await
 }

@@ -263,7 +263,6 @@ dependencies = [
  "farbus-protocol",
  "hostname",
  "rustls",
- "thiserror",
  "tokio",
 ]
 
