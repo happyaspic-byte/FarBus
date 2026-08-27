@@ -11,7 +11,8 @@ Secure, high-performance open-source USB sharing over IPv6 and IPv4.
 - **One-Time Pairing:** 6-digit PIN, five failed attempts then lockout, constant-time SHA-256 verification. A successful pair consumes the PIN, rotates a new one, and issues a 256-bit bearer token.
 - **Lease State Machine:** Exclusive, reentrant device leasing with owner-only release protection.
 - **Linux USB Inventory:** Reads physical USB devices from `/sys/bus/usb/devices` (VID, PID, speed, class, product). Falls back to simulated test devices if run in headless/container environments.
-- **USB/IP 1.1 Wire Codec:** Complete big-endian parser and encoder for `OP_REQ_DEVLIST`, `OP_REP_DEVLIST`, `OP_REQ_IMPORT`, `OP_REP_IMPORT`, `USBIP_CMD_SUBMIT`, and `USBIP_RET_SUBMIT` (compatible with Linux kernel `usbip-host` and Windows `usbip-win2`).
+- **USB/IP 1.1 Wire Codec:** Big-endian parser and encoder for `OP_REQ_DEVLIST`, `OP_REP_DEVLIST`, `OP_REQ_IMPORT`, `OP_REP_IMPORT`, `USBIP_CMD_SUBMIT`/`USBIP_RET_SUBMIT`, and `USBIP_CMD_UNLINK`/`USBIP_RET_UNLINK` (Linux `usbip-host`, Windows `usbip-win2`).
+- **Pipelined URBs:** Multiple in-flight submits complete out of order over one TLS session; the loopback USB/IP proxy and FarBus client share that path.
 - **Loopback USB/IP Proxy:** Binds to `127.0.0.1:3240` so standard Windows/Linux USB/IP clients connect locally without exposing raw plaintext traffic over the physical network.
 - **Reproducible Benchmarks:** `farbus-bench` harness measuring URB latency, bulk throughput, and reconnect cycles.
 - **Dual-Stack Pathing:** Happy Eyeballs address interleave prioritizing IPv6 while retaining IPv4 fallback.
