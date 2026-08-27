@@ -56,4 +56,9 @@ impl LeaseBook {
     pub fn owner(&self, device: DeviceId) -> Option<PeerFingerprint> {
         self.owners.get(&device).copied()
     }
+
+    /// Drops every lease owned by `peer`.
+    pub fn release_all(&mut self, peer: PeerFingerprint) {
+        self.owners.retain(|_, owner| *owner != peer);
+    }
 }

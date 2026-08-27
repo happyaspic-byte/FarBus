@@ -86,10 +86,21 @@ async fn handle_forward(
                 reply.extend_from_slice(&USBIP_VERSION.to_be_bytes());
                 reply.extend_from_slice(&OP_REP_IMPORT.to_be_bytes());
                 if let Some(device) = found {
+                    {
+                        let mut farbus = client.lock().await;
+                        if farbus.attach(device.info.id).await.is_err() {
+                            reply.extend_from_slice(&2u32.to_be_bytes());
+                            stream.write_all(&reply).await?;
+                            continue;
+                        }
+                    }
                     reply.extend_from_slice(&0u32.to_be_bytes());
                     reply.extend_from_slice(&encode_device_header(&device));
                     stream.write_all(&reply).await?;
-                    forward_urbs(&mut stream, device.info.id, &client).await?;
+                    let result = forward_urbs(&mut stream, device.info.id, &client).await;
+                    let mut farbus = client.lock().await;
+                    let _ = farbus.detach(device.info.id).await;
+                    result?;
                 } else {
                     reply.extend_from_slice(&4u32.to_be_bytes());
                     stream.write_all(&reply).await?;
@@ -155,6 +166,7 @@ async fn forward_urbs(
                     .reconnect()
                     .await
                     .map_err(|err| std::io::Error::other(err.to_string()))?;
+                let _ = farbus.attach(device_id).await;
                 farbus
                     .urb(
                         device_id,

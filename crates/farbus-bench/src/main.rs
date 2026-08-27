@@ -1,13 +1,12 @@
 use clap::Parser;
 use farbus_bench::{Cli, Scenario};
 use farbus_core::{
-    make_pinned_client_config, make_self_signed, make_server_config, read_message, serve_session,
-    simulated_lab_devices, write_message, DeviceId, Identity, Message, ServerState,
+    hash_pin, make_self_signed, make_server_config, serve_session, simulated_lab_devices, DeviceId,
+    FarBusClient, ServerState, TransferType,
 };
-use farbus_protocol::{TransferType, UrbSubmit, VERSION};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 
 #[tokio::main]
 #[allow(
@@ -20,21 +19,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     println!("=== FarBus Benchmark: {:?} ===", cli.scenario);
 
-    let (certs, key, server_fp) = make_self_signed("farbus.bench")?;
+    let (certs, key, server_fp) = make_self_signed("farbus.local")?;
     let acceptor = make_server_config(certs, key)?;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
-
     let state = Arc::new(ServerState::new(
         "farbus-bench".into(),
         server_fp,
         simulated_lab_devices(),
     ));
+    let pin = state.pin.lock().await.pin.clone();
 
     let _server = tokio::spawn({
         let state = Arc::clone(&state);
         async move {
             while let Ok((stream, _)) = listener.accept().await {
+                let _ = stream.set_nodelay(true);
                 let acceptor = acceptor.clone();
                 let state = Arc::clone(&state);
                 tokio::spawn(async move {
@@ -46,72 +46,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let connector = make_pinned_client_config(server_fp)?;
-    let stream = TcpStream::connect(addr).await?;
-    let server_name = rustls::pki_types::ServerName::try_from("farbus.bench")?;
-    let mut client = connector.connect(server_name, stream).await?;
-
-    let id = Identity::generate();
-    write_message(
-        &mut client,
-        &Message::Hello(farbus_protocol::Hello {
-            protocol_min: VERSION,
-            protocol_max: VERSION,
-            fingerprint: *id.fingerprint.as_bytes(),
-            hostname: "bench-client".into(),
-        }),
-    )
-    .await?;
-    let _ = read_message(&mut client).await?;
+    let mut client = FarBusClient::connect(addr, server_fp).await?;
+    client.pair(&pin, server_fp).await?;
+    let _ = hash_pin(&pin, server_fp);
+    let device = match cli.scenario {
+        Scenario::BulkThroughput => DeviceId(3),
+        _ => DeviceId(1),
+    };
+    client.attach(device).await?;
 
     match cli.scenario {
         Scenario::ControlLatency => {
-            let rounds = 1_000;
+            let rounds = 1_000u32;
             let start = Instant::now();
             for seq in 0..rounds {
-                write_message(
-                    &mut client,
-                    &Message::UrbSubmit(UrbSubmit {
+                let _ = client
+                    .urb(
+                        device,
                         seq,
-                        device_id: DeviceId(1),
-                        endpoint: 0,
-                        transfer: TransferType::Control,
-                        data: vec![0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00],
-                    }),
-                )
-                .await?;
-                let _ = read_message(&mut client).await?;
+                        0,
+                        TransferType::Control,
+                        vec![0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00],
+                    )
+                    .await?;
             }
             let elapsed = start.elapsed();
-            let avg = elapsed.as_micros() as f64 / rounds as f64;
+            let avg = elapsed.as_micros() as f64 / f64::from(rounds);
             println!("Rounds       : {rounds}");
             println!("Total time   : {elapsed:?}");
             println!("Avg URB RTT  : {avg:.2} µs ({:.3} ms)", avg / 1000.0);
             println!(
                 "Throughput   : {:.0} ops/sec",
-                rounds as f64 / elapsed.as_secs_f64()
+                f64::from(rounds) / elapsed.as_secs_f64()
             );
         }
         Scenario::BulkThroughput => {
-            let chunks = 2_000;
-            let chunk_size = 512;
+            let chunks = 2_000u32;
+            let chunk_size = 512u32;
             let start = Instant::now();
             for seq in 0..chunks {
-                write_message(
-                    &mut client,
-                    &Message::UrbSubmit(UrbSubmit {
-                        seq,
-                        device_id: DeviceId(3),
-                        endpoint: 0x81,
-                        transfer: TransferType::Bulk,
-                        data: vec![0u8; 64],
-                    }),
-                )
-                .await?;
-                let _ = read_message(&mut client).await?;
+                let _ = client
+                    .urb(device, seq, 0x81, TransferType::Bulk, vec![0u8; 64])
+                    .await?;
             }
             let elapsed = start.elapsed();
-            let total_mb = (chunks * chunk_size) as f64 / (1024.0 * 1024.0);
+            let total_mb = f64::from(chunks * chunk_size) / (1024.0 * 1024.0);
             let mb_s = total_mb / elapsed.as_secs_f64();
             println!("Transferred  : {total_mb:.2} MB");
             println!("Elapsed      : {elapsed:?}");
@@ -121,20 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Simulating 50 disconnect & reconnect cycles...");
             let start = Instant::now();
             for _ in 0..50 {
-                let stream = TcpStream::connect(addr).await?;
-                let server_name = rustls::pki_types::ServerName::try_from("farbus.bench")?;
-                let mut c = connector.connect(server_name, stream).await?;
-                write_message(
-                    &mut c,
-                    &Message::Hello(farbus_protocol::Hello {
-                        protocol_min: VERSION,
-                        protocol_max: VERSION,
-                        fingerprint: *id.fingerprint.as_bytes(),
-                        hostname: "bench".into(),
-                    }),
-                )
-                .await?;
-                let _ = read_message(&mut c).await?;
+                client.reconnect().await?;
             }
             let elapsed = start.elapsed();
             println!(

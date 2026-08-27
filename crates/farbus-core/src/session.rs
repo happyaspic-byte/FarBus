@@ -64,6 +64,9 @@ where
         let msg = match read_message(stream).await {
             Ok(msg) => msg,
             Err(FrameError::Io(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                if let Some(peer) = peer {
+                    state.leases.lock().await.release_all(peer);
+                }
                 break;
             }
             Err(err) => return Err(err),
@@ -83,8 +86,9 @@ where
                 .await?;
             }
             Message::PairRequest(req) => {
+                let request_peer = PeerFingerprint::new(req.client_fingerprint);
                 let mut pin = state.pin.lock().await;
-                let success = pin.is_valid(&req.pin_hash);
+                let success = peer == Some(request_peer) && pin.is_valid(&req.pin_hash);
                 let token = if success {
                     let token = issue_auth_token();
                     state.tokens.lock().await.insert(
@@ -124,7 +128,7 @@ where
                     .await?;
                     continue;
                 };
-                if Instant::now() > expires {
+                if peer != Some(owner) || Instant::now() > expires {
                     write_message(
                         stream,
                         &Message::Error {
@@ -182,8 +186,38 @@ where
                 write_message(stream, &Message::Detach { device_id }).await?;
             }
             Message::UrbSubmit(urb) => {
+                let Some(peer) = peer else {
+                    write_message(
+                        stream,
+                        &Message::Error {
+                            code: ErrorCode::Unauthorized,
+                            detail: "missing client identity".into(),
+                        },
+                    )
+                    .await?;
+                    continue;
+                };
+                if state.leases.lock().await.owner(urb.device_id) != Some(peer) {
+                    write_message(
+                        stream,
+                        &Message::Error {
+                            code: ErrorCode::Unauthorized,
+                            detail: "device lease required".into(),
+                        },
+                    )
+                    .await?;
+                    continue;
+                }
                 #[cfg(target_os = "linux")]
-                let complete = crate::host_usb::complete_host_or_emulated(&urb, &state.devices);
+                let complete = {
+                    let devices = state.devices.clone();
+                    let submitted = urb.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::host_usb::complete_host_or_emulated(&submitted, &devices)
+                    })
+                    .await
+                    .map_err(|join| FrameError::Io(std::io::Error::other(join.to_string())))?
+                };
                 #[cfg(not(target_os = "linux"))]
                 let complete = complete_urb(&urb);
                 write_message(stream, &Message::UrbComplete(complete)).await?;
@@ -199,6 +233,9 @@ where
                 .await?;
             }
         }
+    }
+    if let Some(peer) = peer {
+        state.leases.lock().await.release_all(peer);
     }
     Ok(())
 }

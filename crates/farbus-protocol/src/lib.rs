@@ -306,6 +306,9 @@ pub fn decode(bytes: &[u8]) -> Result<Message, Error> {
     if bytes.len() < HEADER_LEN + len {
         return Err(Error::Truncated);
     }
+    if bytes.len() != HEADER_LEN + len {
+        return Err(Error::InvalidPayload);
+    }
     parse_payload(ty, &bytes[HEADER_LEN..HEADER_LEN + len])
 }
 

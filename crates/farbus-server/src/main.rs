@@ -70,6 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
+        let _ = stream.set_nodelay(true);
         let acceptor = acceptor.clone();
         let state = Arc::clone(&state);
         tokio::spawn(async move {

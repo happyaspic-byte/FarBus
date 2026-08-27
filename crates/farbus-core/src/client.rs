@@ -45,6 +45,7 @@ impl FarBusClient {
     pub async fn connect(addr: SocketAddr, expected: PeerFingerprint) -> Result<Self, ClientError> {
         let connector = make_pinned_client_config(expected).map_err(|_| ClientError::Tls)?;
         let tcp = TcpStream::connect(addr).await?;
+        let _ = tcp.set_nodelay(true);
         let name = ServerName::try_from("farbus.local").map_err(|_| ClientError::Tls)?;
         let stream = connector
             .connect(name, tcp)
@@ -70,6 +71,7 @@ impl FarBusClient {
     pub async fn reconnect(&mut self) -> Result<(), ClientError> {
         let connector = make_pinned_client_config(self.expected).map_err(|_| ClientError::Tls)?;
         let tcp = TcpStream::connect(self.addr).await?;
+        let _ = tcp.set_nodelay(true);
         let name = ServerName::try_from("farbus.local").map_err(|_| ClientError::Tls)?;
         self.stream = connector
             .connect(name, tcp)
@@ -215,6 +217,7 @@ impl FarBusClient {
         .await?;
         match read_message(&mut self.stream).await? {
             Message::UrbComplete(complete) => Ok(complete),
+            Message::Error { .. } => Err(ClientError::AttachRejected),
             _ => Err(ClientError::Unexpected),
         }
     }

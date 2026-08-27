@@ -57,6 +57,18 @@ fn only_owner_can_release_lease() {
 }
 
 #[test]
+fn release_all_clears_only_that_peer() {
+    let mut leases = LeaseBook::default();
+    let alice = fingerprint(1);
+    let bob = fingerprint(2);
+    leases.acquire(DeviceId(1), alice).unwrap();
+    leases.acquire(DeviceId(2), bob).unwrap();
+    leases.release_all(alice);
+    assert_eq!(leases.owner(DeviceId(1)), None);
+    assert_eq!(leases.owner(DeviceId(2)), Some(bob));
+}
+
+#[test]
 fn connection_order_interleaves_ipv6_and_ipv4_with_ipv6_first() {
     let v4a = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 7420);
     let v4b = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)), 7420);
