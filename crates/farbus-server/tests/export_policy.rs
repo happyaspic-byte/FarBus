@@ -1,6 +1,10 @@
-use farbus_core::{parse_sysfs_device, simulated_lab_devices, DeviceId};
+use farbus_core::simulated_lab_devices;
+#[cfg(target_os = "linux")]
+use farbus_core::{parse_sysfs_device, DeviceId};
 use farbus_server::{apply_export_flags, apply_export_policy};
+#[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 
 #[test]
@@ -95,10 +99,12 @@ fn absent_exact_export_is_applied_when_device_arrives_later() {
         .all(|(index, device)| index == 1 || !device.info.exported));
 }
 
+#[cfg(target_os = "linux")]
 fn write_hex(path: &Path, name: &str, value: &str) {
     fs::write(path.join(name), format!("{value}\n")).unwrap();
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn export_all_denies_sysfs_composite_hid() {
     let temp = std::env::temp_dir().join(format!(

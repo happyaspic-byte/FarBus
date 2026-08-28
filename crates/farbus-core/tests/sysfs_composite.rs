@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 use farbus_core::{parse_sysfs_device, DeviceId};
 use std::fs;
 use std::path::Path;
