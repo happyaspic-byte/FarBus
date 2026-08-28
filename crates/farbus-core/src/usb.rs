@@ -176,6 +176,16 @@ pub fn parse_sysfs_device(dir: &Path, id: DeviceId) -> Option<LocalDevice> {
     if !bus_id.contains('-') {
         return None;
     }
+    let mut interfaces = parse_sysfs_interfaces(dir, &bus_id);
+    if interfaces.is_empty() && usb_class != 0 {
+        interfaces.push(UsbInterfaceInfo {
+            interface_number: 0,
+            interface_class: usb_class,
+            interface_subclass: 0,
+            interface_protocol: 0,
+            endpoints: Vec::new(),
+        });
+    }
     Some(LocalDevice {
         info: DeviceInfo {
             id,
@@ -186,16 +196,70 @@ pub fn parse_sysfs_device(dir: &Path, id: DeviceId) -> Option<LocalDevice> {
             speed,
             product,
             exported: false,
-            interfaces: vec![UsbInterfaceInfo {
-                interface_number: 0,
-                interface_class: usb_class,
-                interface_subclass: 0,
-                interface_protocol: 0,
-                endpoints: Vec::new(),
-            }],
+            interfaces,
         },
         backend: DeviceBackend::Host,
     })
+}
+
+fn parse_sysfs_interfaces(device_dir: &Path, bus_id: &str) -> Vec<UsbInterfaceInfo> {
+    let mut interfaces = Vec::new();
+    let Ok(entries) = fs::read_dir(device_dir) else {
+        return interfaces;
+    };
+
+    let prefix = format!("{bus_id}:");
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with(&prefix) || !name.contains('.') {
+            continue;
+        }
+
+        let Some(interface_number) = read_hex_u8(&path.join("bInterfaceNumber")) else {
+            continue;
+        };
+        let interface_class = read_hex_u8(&path.join("bInterfaceClass")).unwrap_or(0);
+        let interface_subclass = read_hex_u8(&path.join("bInterfaceSubClass")).unwrap_or(0);
+        let interface_protocol = read_hex_u8(&path.join("bInterfaceProtocol")).unwrap_or(0);
+        let endpoints = parse_sysfs_endpoints(&path);
+
+        interfaces.push(UsbInterfaceInfo {
+            interface_number,
+            interface_class,
+            interface_subclass,
+            interface_protocol,
+            endpoints,
+        });
+    }
+
+    interfaces.sort_by_key(|iface| iface.interface_number);
+    interfaces
+}
+
+fn parse_sysfs_endpoints(interface_dir: &Path) -> Vec<u8> {
+    let mut endpoints = Vec::new();
+    let Ok(entries) = fs::read_dir(interface_dir) else {
+        return endpoints;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with("ep_") {
+            if let Some(addr) = read_hex_u8(&path.join("bEndpointAddress")) {
+                endpoints.push(addr);
+            }
+        }
+    }
+    endpoints.sort_unstable();
+    endpoints
 }
 
 #[must_use]

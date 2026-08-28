@@ -222,17 +222,20 @@ async fn forward_urbs(
         if cmd.transfer_buffer_length as usize > 65_536 {
             break;
         }
-        let mut data = Vec::new();
+        let mut out_payload = Vec::new();
         if cmd.direction == 0 && cmd.transfer_buffer_length > 0 {
-            data.resize(cmd.transfer_buffer_length as usize, 0);
-            if reader_half.read_exact(&mut data).await.is_err() {
+            out_payload.resize(cmd.transfer_buffer_length as usize, 0);
+            if reader_half.read_exact(&mut out_payload).await.is_err() {
                 break;
             }
-        } else if cmd.ep == 0 {
-            data = cmd.setup.to_vec();
-        } else {
-            data.resize(cmd.transfer_buffer_length as usize, 0);
         }
+        let data = farbus_protocol::usbip::urb_submit_data(
+            cmd.ep,
+            cmd.direction,
+            cmd.setup,
+            cmd.transfer_buffer_length,
+            &out_payload,
+        );
 
         let client = Arc::clone(client);
         let out_tx = out_tx.clone();

@@ -124,3 +124,61 @@ async fn usbip_devlist_import_and_interrupt_urb() {
     assert_eq!(reply_unlink.seqnum, 8);
     assert_eq!(reply_unlink.status, 0);
 }
+
+#[tokio::test]
+async fn usbip_control_out_preserves_setup_before_payload() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let devices = simulated_lab_devices();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let devices = devices.clone();
+            tokio::spawn(async move {
+                let _ = farbus_core::usbip_proxy::handle_client(stream, devices).await;
+            });
+        }
+    });
+
+    let mut client = TcpStream::connect(addr).await.unwrap();
+    let mut import = Vec::new();
+    import.extend_from_slice(&USBIP_VERSION.to_be_bytes());
+    import.extend_from_slice(&OP_REQ_IMPORT.to_be_bytes());
+    import.extend_from_slice(&0u32.to_be_bytes());
+    let mut busid = [0u8; 32];
+    busid[..5].copy_from_slice(b"1-1.2");
+    import.extend_from_slice(&busid);
+    client.write_all(&import).await.unwrap();
+
+    let mut import_hdr = [0u8; 8];
+    client.read_exact(&mut import_hdr).await.unwrap();
+    assert_eq!(u32::from_be_bytes(import_hdr[4..8].try_into().unwrap()), 0);
+    let mut udev = [0u8; 312];
+    client.read_exact(&mut udev).await.unwrap();
+
+    let setup = [0x21, 0x09, 0, 2, 0, 0, 8, 0];
+    let payload = [0x00, 0x06, 0, 0, 0, 0, 0, 0];
+    let cmd = UsbipCmdSubmit {
+        seqnum: 9,
+        devid: 1,
+        direction: 0,
+        ep: 0,
+        transfer_flags: 0,
+        transfer_buffer_length: 8,
+        start_frame: 0,
+        number_of_packets: 0,
+        interval: 0,
+        setup,
+    };
+    client.write_all(&cmd.encode()).await.unwrap();
+    client.write_all(&payload).await.unwrap();
+
+    let mut ret_hdr = [0u8; 48];
+    client.read_exact(&mut ret_hdr).await.unwrap();
+    let reply = UsbipRetSubmit::decode(&ret_hdr).unwrap();
+    assert_eq!(reply.seqnum, 9);
+    assert_eq!(reply.status, 0);
+    assert_eq!(
+        reply.actual_length, 0,
+        "setup must stay in UrbSubmit.data; payload-only would look like GET_DESCRIPTOR"
+    );
+}

@@ -236,6 +236,29 @@ impl UsbipRetUnlink {
     }
 }
 
+/// Assembles the URB submit payload from a USB/IP submit header and optional OUT payload bytes.
+#[must_use]
+pub fn urb_submit_data(
+    ep: u32,
+    direction: u32,
+    setup: [u8; 8],
+    transfer_buffer_length: u32,
+    out_payload: &[u8],
+) -> Vec<u8> {
+    if ep == 0 {
+        let mut data = Vec::with_capacity(8 + out_payload.len());
+        data.extend_from_slice(&setup);
+        if direction == 0 {
+            data.extend_from_slice(out_payload);
+        }
+        data
+    } else if direction == 0 {
+        out_payload.to_vec()
+    } else {
+        vec![0u8; transfer_buffer_length as usize]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,5 +324,41 @@ mod tests {
             u32::from_be_bytes(ret_unlink.encode()[0..4].try_into().unwrap()),
             USBIP_RET_UNLINK
         );
+    }
+
+    #[test]
+    fn control_out_with_payload_prepends_setup() {
+        let setup = [0x21, 0x09, 0, 2, 0, 0, 4, 0];
+        let payload = [0xde, 0xad, 0xbe, 0xef];
+        let data = urb_submit_data(0, 0, setup, 4, &payload);
+        assert_eq!(&data[..8], &setup);
+        assert_eq!(&data[8..], &payload);
+    }
+
+    #[test]
+    fn control_out_zero_length_is_setup_only() {
+        let setup = [0x00, 0x09, 1, 0, 0, 0, 0, 0];
+        let data = urb_submit_data(0, 0, setup, 0, &[]);
+        assert_eq!(data, setup);
+    }
+
+    #[test]
+    fn control_in_is_setup_only() {
+        let setup = [0x80, 0x06, 0, 1, 0, 0, 18, 0];
+        let data = urb_submit_data(0, 1, setup, 18, &[]);
+        assert_eq!(data, setup);
+    }
+
+    #[test]
+    fn bulk_out_is_payload_only() {
+        let data = urb_submit_data(1, 0, [0xff; 8], 3, &[1, 2, 3]);
+        assert_eq!(data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn bulk_in_is_zeroed_buffer_of_transfer_length() {
+        let data = urb_submit_data(0x81, 1, [0; 8], 64, &[]);
+        assert_eq!(data.len(), 64);
+        assert!(data.iter().all(|&b| b == 0));
     }
 }
