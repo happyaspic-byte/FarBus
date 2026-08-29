@@ -37,6 +37,7 @@ proptest! {
             device_id: DeviceId(dev),
             endpoint: ep,
             transfer: TransferType::Bulk,
+            requested_length: u32::try_from(data.len()).unwrap_or(0),
             data,
         });
         let encoded = encode(&msg).unwrap();

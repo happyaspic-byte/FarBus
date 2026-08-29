@@ -133,6 +133,7 @@ async fn server_session_e2e_full_lifecycle() {
             device_id: DeviceId(1),
             endpoint: 0x81,
             transfer: TransferType::Interrupt,
+            requested_length: 8,
             data: Vec::new(),
         }),
     )

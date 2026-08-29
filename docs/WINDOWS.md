@@ -42,8 +42,8 @@ On Windows:
 ```powershell
 farbus discover
 farbus --connect HOST:7420 pair <fingerprint>
-farbus devices <fingerprint>
-farbus attach <fingerprint> 1
+farbus devices
+farbus attach 1
 ```
 
 Leave `farbus attach` running in the foreground. It opens a plaintext USB/IP listener only on a loopback address; non-loopback `--usbip-listen` values are rejected.
@@ -61,5 +61,5 @@ Do not point usbip-win2 at the remote FarBus TLS port.
 
 - HID devices can inject keystrokes. Export only trusted devices by exact bus ID.
 - Isochronous physical devices such as webcams and USB audio are unsupported.
-- If forwarding stops after a network failure, rerun `farbus attach`.
+- If the TLS session drops, FarBus reconnects, reattaches the same device, and retries the in-flight URB once. Persistent `Unauthorized` or lease-conflict errors still require `farbus pair` or `farbus attach` again.
 - Windows bearer-token storage is not DPAPI-protected yet. Protect the user profile and do not share `%USERPROFILE%\.config\farbus`.

@@ -236,7 +236,9 @@ impl UsbipRetUnlink {
     }
 }
 
-/// Assembles the URB submit payload from a USB/IP submit header and optional OUT payload bytes.
+/// Assembles a `FarBus` URB submit's `data` and `requested_length` from a USB/IP header.
+///
+/// IN transfers carry an empty `data` buffer; the host length lives in `requested_length`.
 #[must_use]
 pub fn urb_submit_data(
     ep: u32,
@@ -244,18 +246,18 @@ pub fn urb_submit_data(
     setup: [u8; 8],
     transfer_buffer_length: u32,
     out_payload: &[u8],
-) -> Vec<u8> {
+) -> (Vec<u8>, u32) {
     if ep == 0 {
         let mut data = Vec::with_capacity(8 + out_payload.len());
         data.extend_from_slice(&setup);
         if direction == 0 {
             data.extend_from_slice(out_payload);
         }
-        data
+        (data, transfer_buffer_length)
     } else if direction == 0 {
-        out_payload.to_vec()
+        (out_payload.to_vec(), transfer_buffer_length)
     } else {
-        vec![0u8; transfer_buffer_length as usize]
+        (Vec::new(), transfer_buffer_length)
     }
 }
 
@@ -330,35 +332,39 @@ mod tests {
     fn control_out_with_payload_prepends_setup() {
         let setup = [0x21, 0x09, 0, 2, 0, 0, 4, 0];
         let payload = [0xde, 0xad, 0xbe, 0xef];
-        let data = urb_submit_data(0, 0, setup, 4, &payload);
+        let (data, requested) = urb_submit_data(0, 0, setup, 4, &payload);
         assert_eq!(&data[..8], &setup);
         assert_eq!(&data[8..], &payload);
+        assert_eq!(requested, 4);
     }
 
     #[test]
     fn control_out_zero_length_is_setup_only() {
         let setup = [0x00, 0x09, 1, 0, 0, 0, 0, 0];
-        let data = urb_submit_data(0, 0, setup, 0, &[]);
+        let (data, requested) = urb_submit_data(0, 0, setup, 0, &[]);
         assert_eq!(data, setup);
+        assert_eq!(requested, 0);
     }
 
     #[test]
     fn control_in_is_setup_only() {
         let setup = [0x80, 0x06, 0, 1, 0, 0, 18, 0];
-        let data = urb_submit_data(0, 1, setup, 18, &[]);
+        let (data, requested) = urb_submit_data(0, 1, setup, 18, &[]);
         assert_eq!(data, setup);
+        assert_eq!(requested, 18);
     }
 
     #[test]
     fn bulk_out_is_payload_only() {
-        let data = urb_submit_data(1, 0, [0xff; 8], 3, &[1, 2, 3]);
+        let (data, requested) = urb_submit_data(1, 0, [0xff; 8], 3, &[1, 2, 3]);
         assert_eq!(data, vec![1, 2, 3]);
+        assert_eq!(requested, 3);
     }
 
     #[test]
-    fn bulk_in_is_zeroed_buffer_of_transfer_length() {
-        let data = urb_submit_data(0x81, 1, [0; 8], 64, &[]);
-        assert_eq!(data.len(), 64);
-        assert!(data.iter().all(|&b| b == 0));
+    fn bulk_in_is_empty_with_requested_length() {
+        let (data, requested) = urb_submit_data(0x81, 1, [0; 8], 64, &[]);
+        assert!(data.is_empty());
+        assert_eq!(requested, 64);
     }
 }

@@ -186,7 +186,7 @@ async fn serve_urbs(stream: TcpStream, device_id: DeviceId) -> std::io::Result<(
                 break;
             }
         }
-        let data = farbus_protocol::usbip::urb_submit_data(
+        let (data, requested_length) = farbus_protocol::usbip::urb_submit_data(
             cmd.ep,
             cmd.direction,
             cmd.setup,
@@ -201,6 +201,7 @@ async fn serve_urbs(stream: TcpStream, device_id: DeviceId) -> std::io::Result<(
                 device_id,
                 endpoint: u8::try_from(cmd.ep).unwrap_or(0),
                 transfer,
+                requested_length,
                 data,
             });
             let ret = UsbipRetSubmit {

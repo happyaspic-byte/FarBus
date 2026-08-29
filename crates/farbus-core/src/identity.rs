@@ -76,14 +76,30 @@ pub struct PairingPin {
 impl PairingPin {
     #[must_use]
     pub fn issue(server: PeerFingerprint) -> Self {
+        Self::issue_with_ttl(server, PIN_TTL)
+    }
+
+    #[must_use]
+    pub fn issue_with_ttl(server: PeerFingerprint, ttl: Duration) -> Self {
         let pin = format!("{:06}", rand::thread_rng().gen_range(100_000..1_000_000));
         Self {
             hash: hash_pin(&pin, server),
             pin,
-            expires_at: Instant::now() + PIN_TTL,
+            expires_at: Instant::now() + ttl,
             attempts: 0,
             consumed: false,
         }
+    }
+
+    /// Replaces this PIN with a fresh one when the current one has expired.
+    /// A locked-out PIN is not reissued; only expiration rotates it.
+    #[must_use]
+    pub fn reissue_if_expired(&mut self, server: PeerFingerprint) -> Option<String> {
+        if Instant::now() <= self.expires_at || self.attempts >= 5 {
+            return None;
+        }
+        *self = Self::issue(server);
+        Some(self.pin.clone())
     }
 
     /// Constant-time PIN check with a five-attempt lockout.

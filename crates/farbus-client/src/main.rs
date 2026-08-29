@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let client = connect_saved(cli.connect, fingerprint).await?;
             client.detach(DeviceId(device_id)).await?;
-            println!("Detached device {device_id} from {fingerprint}");
+            println!("Detached device {device_id}");
         }
         Command::Diagnose { fingerprint } => {
             let saved = load_session(Some(fingerprint)).ok_or("run 'farbus pair' first")?;
@@ -142,13 +142,13 @@ fn require_connect(connect: Option<SocketAddr>) -> Result<SocketAddr, Box<dyn st
 
 async fn connect_saved(
     connect: Option<SocketAddr>,
-    fingerprint: farbus_core::PeerFingerprint,
+    fingerprint: Option<farbus_core::PeerFingerprint>,
 ) -> Result<FarBusClient, Box<dyn std::error::Error>> {
-    let saved = load_session(Some(fingerprint)).ok_or("run 'farbus pair' first")?;
+    let saved = load_session(fingerprint).ok_or("run 'farbus pair' first")?;
     let addr = connect.unwrap_or(saved.addr);
     Ok(farbus_core::connect_with_retry(
         addr,
-        fingerprint,
+        saved.fingerprint,
         Some(saved.auth_token),
         &farbus_core::ReconnectPolicy::default(),
     )

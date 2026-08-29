@@ -65,6 +65,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let pin = state.pin.lock().await.pin.clone();
+    let pin_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        let mut updates = pin_state.subscribe_pairing_pins();
+        let mut renewal = tokio::time::interval(std::time::Duration::from_secs(15));
+        loop {
+            tokio::select! {
+                Ok(new_pin) = updates.recv() => {
+                    println!(" Pairing PIN : {new_pin}  (valid for 2 minutes)");
+                }
+                _ = renewal.tick() => {
+                    let _ = pin_state.renew_expired_pin().await;
+                }
+            }
+        }
+    });
     println!("==================================================");
     println!(" FarBus USB Server 0.1.0");
     println!(" Fingerprint : {server_fp}");

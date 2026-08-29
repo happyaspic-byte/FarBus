@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{split, AsyncRead, AsyncWrite};
-use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock, Semaphore};
 
 const MAX_IN_FLIGHT_URBS: usize = 64;
 
@@ -26,6 +26,7 @@ pub struct ServerState {
     pub hostname: String,
     pub fingerprint: PeerFingerprint,
     pub pin: Mutex<PairingPin>,
+    pin_updates: broadcast::Sender<String>,
     pub leases: Mutex<LeaseBook>,
     pub tokens: Mutex<HashMap<[u8; 32], (PeerFingerprint, Instant)>>,
     pub devices: RwLock<DeviceInventory>,
@@ -35,8 +36,10 @@ pub struct ServerState {
 impl ServerState {
     #[must_use]
     pub fn new(hostname: String, fingerprint: PeerFingerprint, devices: Vec<LocalDevice>) -> Self {
+        let (pin_updates, _) = broadcast::channel(16);
         Self {
             pin: Mutex::new(PairingPin::issue(fingerprint)),
+            pin_updates,
             hostname,
             fingerprint,
             leases: Mutex::new(LeaseBook::default()),
@@ -44,6 +47,32 @@ impl ServerState {
             devices: RwLock::new(DeviceInventory::new(devices)),
             urb_completer: None,
         }
+    }
+
+    #[must_use]
+    pub fn subscribe_pairing_pins(&self) -> broadcast::Receiver<String> {
+        self.pin_updates.subscribe()
+    }
+
+    pub async fn renew_expired_pin(&self) -> Option<String> {
+        let mut pin = self.pin.lock().await;
+        let new_pin = pin.reissue_if_expired(self.fingerprint)?;
+        let _ = self.pin_updates.send(new_pin.clone());
+        Some(new_pin)
+    }
+
+    pub async fn validate_pairing_pin(&self, candidate_hash: &[u8; 32]) -> bool {
+        let mut pin = self.pin.lock().await;
+        if let Some(new_pin) = pin.reissue_if_expired(self.fingerprint) {
+            let _ = self.pin_updates.send(new_pin);
+            return false;
+        }
+        let success = pin.is_valid(candidate_hash);
+        if success {
+            *pin = PairingPin::issue(self.fingerprint);
+            let _ = self.pin_updates.send(pin.pin.clone());
+        }
+        success
     }
 
     #[must_use]
@@ -134,10 +163,9 @@ where
                 }
                 Message::PairRequest(req) => {
                     let request_peer = PeerFingerprint::new(req.client_fingerprint);
-                    let mut pin = reader_state.pin.lock().await;
-                    let success = peer == Some(request_peer) && pin.is_valid(&req.pin_hash);
+                    let success = peer == Some(request_peer)
+                        && reader_state.validate_pairing_pin(&req.pin_hash).await;
                     let token = if success {
-                        *pin = PairingPin::issue(reader_state.fingerprint);
                         let token = issue_auth_token();
                         reader_state.tokens.lock().await.insert(
                             token,

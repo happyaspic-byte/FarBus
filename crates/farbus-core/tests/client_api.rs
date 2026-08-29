@@ -59,7 +59,7 @@ async fn farbus_client_high_level_api_roundtrip() {
         .unwrap();
     assert_eq!(urb.seq, 100);
     assert_eq!(urb.status, 0);
-    assert_eq!(urb.data.len(), 512);
+    assert_eq!(urb.data.len(), 16);
 
     client.detach(DeviceId(2)).await.unwrap();
 }

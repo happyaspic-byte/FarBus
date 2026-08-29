@@ -43,6 +43,7 @@ fn roundtrips_urb_submit_and_complete() {
         device_id: DeviceId(1),
         endpoint: 0x81,
         transfer: TransferType::Interrupt,
+        requested_length: 3,
         data: vec![0x01, 0x02, 0x03],
     });
     let complete = Message::UrbComplete(UrbComplete {
@@ -52,6 +53,42 @@ fn roundtrips_urb_submit_and_complete() {
     });
     assert_eq!(decode(&encode(&submit).unwrap()).unwrap(), submit);
     assert_eq!(decode(&encode(&complete).unwrap()).unwrap(), complete);
+}
+
+#[test]
+fn roundtrips_bulk_in_with_requested_length_and_empty_data() {
+    let submit = Message::UrbSubmit(UrbSubmit {
+        seq: 12,
+        device_id: DeviceId(3),
+        endpoint: 0x82,
+        transfer: TransferType::Bulk,
+        requested_length: 65_536,
+        data: Vec::new(),
+    });
+    assert_eq!(decode(&encode(&submit).unwrap()).unwrap(), submit);
+}
+
+#[test]
+fn rejects_version_one_frames() {
+    let submit = Message::UrbSubmit(UrbSubmit {
+        seq: 1,
+        device_id: DeviceId(1),
+        endpoint: 0,
+        transfer: TransferType::Control,
+        requested_length: 0,
+        data: vec![0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00],
+    });
+    let mut bytes = encode(&submit).unwrap();
+    bytes[4] = 1;
+    assert!(matches!(
+        decode(&bytes).unwrap_err(),
+        farbus_protocol::Error::UnsupportedVersion(1)
+    ));
+}
+
+#[test]
+fn version_is_two() {
+    assert_eq!(farbus_protocol::VERSION, 2);
 }
 
 #[test]

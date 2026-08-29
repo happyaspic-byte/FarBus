@@ -53,7 +53,8 @@ fn interrupt_complete(submit: &UrbSubmit) -> UrbComplete {
 
 fn bulk_complete(submit: &UrbSubmit) -> UrbComplete {
     if submit.endpoint & 0x80 != 0 {
-        let mut data = vec![0u8; 512];
+        let requested = usize::try_from(submit.requested_length.clamp(1, 65_536)).unwrap_or(1);
+        let mut data = vec![0u8; requested];
         for (i, byte) in data.iter_mut().enumerate() {
             *byte = u8::try_from(i % 251).unwrap_or(0);
         }

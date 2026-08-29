@@ -4,8 +4,8 @@ pub mod usbip;
 
 use thiserror::Error as ThisError;
 
-pub const VERSION: u8 = 1;
-pub const MAX_PAYLOAD: usize = 65_536;
+pub const VERSION: u8 = 2;
+pub const MAX_PAYLOAD: usize = 65_600;
 const MAGIC: &[u8; 4] = b"FARB";
 pub const HEADER_LEN: usize = 10;
 const MAX_U8_STR: usize = 255;
@@ -85,6 +85,7 @@ pub struct UrbSubmit {
     pub device_id: DeviceId,
     pub endpoint: u8,
     pub transfer: TransferType,
+    pub requested_length: u32,
     pub data: Vec<u8>,
 }
 
@@ -308,10 +309,11 @@ pub fn encode(msg: &Message) -> Result<Vec<u8>, Error> {
             payload.extend_from_slice(&urb.device_id.0.to_be_bytes());
             payload.push(urb.endpoint);
             payload.push(transfer_to_u8(urb.transfer));
-            let data_len = u16::try_from(urb.data.len()).map_err(|_| Error::FieldTooLong {
+            payload.extend_from_slice(&urb.requested_length.to_be_bytes());
+            let data_len = u32::try_from(urb.data.len()).map_err(|_| Error::FieldTooLong {
                 field: "urb.data",
                 len: urb.data.len(),
-                max: usize::from(u16::MAX),
+                max: MAX_PAYLOAD,
             })?;
             payload.extend_from_slice(&data_len.to_be_bytes());
             payload.extend_from_slice(&urb.data);
@@ -319,10 +321,10 @@ pub fn encode(msg: &Message) -> Result<Vec<u8>, Error> {
         Message::UrbComplete(urb) => {
             payload.extend_from_slice(&urb.seq.to_be_bytes());
             payload.extend_from_slice(&urb.status.to_be_bytes());
-            let data_len = u16::try_from(urb.data.len()).map_err(|_| Error::FieldTooLong {
+            let data_len = u32::try_from(urb.data.len()).map_err(|_| Error::FieldTooLong {
                 field: "urb.data",
                 len: urb.data.len(),
-                max: usize::from(u16::MAX),
+                max: MAX_PAYLOAD,
             })?;
             payload.extend_from_slice(&data_len.to_be_bytes());
             payload.extend_from_slice(&urb.data);
@@ -552,7 +554,8 @@ fn parse_payload(ty: u8, payload: &[u8]) -> Result<Message, Error> {
             let device_id = DeviceId(cur.u32()?);
             let endpoint = cur.u8()?;
             let transfer = u8_to_transfer(cur.u8()?)?;
-            let data_len = usize::from(cur.u16()?);
+            let requested_length = cur.u32()?;
+            let data_len = usize::try_from(cur.u32()?).map_err(|_| Error::InvalidPayload)?;
             let data = cur.take(data_len)?.to_vec();
             cur.finish()?;
             Ok(Message::UrbSubmit(UrbSubmit {
@@ -560,6 +563,7 @@ fn parse_payload(ty: u8, payload: &[u8]) -> Result<Message, Error> {
                 device_id,
                 endpoint,
                 transfer,
+                requested_length,
                 data,
             }))
         }
@@ -568,7 +572,7 @@ fn parse_payload(ty: u8, payload: &[u8]) -> Result<Message, Error> {
             let mut status_buf = [0u8; 4];
             cur.read_exact(&mut status_buf)?;
             let status = i32::from_be_bytes(status_buf);
-            let data_len = usize::from(cur.u16()?);
+            let data_len = usize::try_from(cur.u32()?).map_err(|_| Error::InvalidPayload)?;
             let data = cur.take(data_len)?.to_vec();
             cur.finish()?;
             Ok(Message::UrbComplete(UrbComplete { seq, status, data }))
@@ -779,7 +783,7 @@ mod tests {
     #[test]
     fn rejects_oversized_payload_length() {
         let mut header = Vec::from(*b"FARB");
-        header.push(1);
+        header.push(VERSION);
         header.push(Message::ERROR_TYPE);
         let oversized = u32::try_from(MAX_PAYLOAD + 1).expect("payload limit fits u32");
         header.extend_from_slice(&oversized.to_be_bytes());

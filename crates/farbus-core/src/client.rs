@@ -309,6 +309,25 @@ impl FarBusClient {
         transfer: TransferType,
         data: Vec<u8>,
     ) -> Result<UrbComplete, ClientError> {
+        let requested_length = u32::try_from(data.len()).unwrap_or(u32::MAX);
+        self.urb_with_length(device_id, seq, endpoint, transfer, requested_length, data)
+            .await
+    }
+
+    /// Submits one URB with a requested IN length independent of its wire payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns framing errors on disconnect.
+    pub async fn urb_with_length(
+        &self,
+        device_id: DeviceId,
+        seq: u32,
+        endpoint: u8,
+        transfer: TransferType,
+        requested_length: u32,
+        data: Vec<u8>,
+    ) -> Result<UrbComplete, ClientError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.send_cmd(ClientCmd::Urb {
             urb: UrbSubmit {
@@ -316,6 +335,7 @@ impl FarBusClient {
                 device_id,
                 endpoint,
                 transfer,
+                requested_length,
                 data,
             },
             reply: reply_tx,

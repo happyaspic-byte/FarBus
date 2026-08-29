@@ -92,6 +92,7 @@ async fn later_urb_completes_without_waiting_for_slow_earlier_urb() {
                 device_id: DeviceId(1),
                 endpoint: 0x81,
                 transfer: TransferType::Interrupt,
+                requested_length: 8,
                 data: vec![0; 8],
             }),
         )
@@ -193,6 +194,7 @@ async fn session_does_not_deadlock_when_many_urbs_complete_together() {
                 device_id: DeviceId(1),
                 endpoint: 0x81,
                 transfer: TransferType::Interrupt,
+                requested_length: 8,
                 data: vec![0; 8],
             }),
         )

@@ -1,8 +1,8 @@
 use clap::Parser;
 use farbus_bench::{Cli, Scenario};
 use farbus_core::{
-    hash_pin, make_self_signed, make_server_config, serve_session, simulated_lab_devices, DeviceId,
-    FarBusClient, ServerState, TransferType,
+    hash_pin, make_self_signed, make_server_config, serve_session, simulated_lab_devices,
+    ClientError, DeviceId, FarBusClient, ServerState, TransferType,
 };
 use std::sync::Arc;
 use std::time::Instant;
@@ -17,7 +17,9 @@ use tokio::net::TcpListener;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
-    println!("=== FarBus Benchmark: {:?} ===", cli.scenario);
+    if !cli.json {
+        println!("=== FarBus Benchmark: {:?} ===", cli.scenario);
+    }
 
     let (certs, key, server_fp) = make_self_signed("farbus.local")?;
     let acceptor = make_server_config(certs, key)?;
@@ -81,21 +83,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Scenario::BulkThroughput => {
+            use futures::stream::{self, StreamExt, TryStreamExt};
             let chunks = 1_000u32;
             let chunk_size = 16_384u32;
             let payload = vec![0u8; chunk_size as usize];
             let start = Instant::now();
-            for seq in 0..chunks {
-                let _ = client
-                    .urb(device, seq, 1, TransferType::Bulk, payload.clone())
-                    .await?;
-            }
+            let mut submitted = 0u64;
+            stream::iter(0..chunks)
+                .map(|seq| {
+                    let client = client.clone();
+                    let payload = payload.clone();
+                    async move {
+                        let _ = client
+                            .urb(device, seq, 1, TransferType::Bulk, payload)
+                            .await?;
+                        Ok::<u32, ClientError>(1)
+                    }
+                })
+                .buffer_unordered(cli.depth)
+                .try_for_each(|n| {
+                    submitted += u64::from(n);
+                    futures::future::ready(Ok::<(), ClientError>(()))
+                })
+                .await?;
             let elapsed = start.elapsed();
             let total_mb = f64::from(chunks * chunk_size) / (1024.0 * 1024.0);
             let mb_s = total_mb / elapsed.as_secs_f64();
-            println!("Transferred  : {total_mb:.2} MB");
-            println!("Elapsed      : {elapsed:?}");
-            println!("Bulk Speed   : {mb_s:.2} MB/s");
+            assert_eq!(
+                submitted,
+                u64::from(chunks),
+                "every submitted URB completed"
+            );
+            if cli.json {
+                println!(
+                    "{{\"scenario\":\"bulk-throughput\",\"depth\":{},\"chunks\":{},\"chunk_size\":{},\"mb\":{:.2},\"elapsed_s\":{:.4},\"mbps\":{:.2}}}",
+                    cli.depth, chunks, chunk_size, total_mb, elapsed.as_secs_f64(), mb_s
+                );
+            } else {
+                println!("Pipeline depth: {}", cli.depth);
+                println!("Transferred  : {total_mb:.2} MB");
+                println!("Elapsed      : {elapsed:?}");
+                println!("Bulk Speed   : {mb_s:.2} MB/s");
+            }
         }
         Scenario::Reconnect => {
             println!("Simulating 50 disconnect & reconnect cycles...");

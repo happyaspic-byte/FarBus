@@ -29,11 +29,17 @@ pub enum Command {
     /// Pair with a server; reads the PIN securely from the terminal
     Pair { fingerprint: PeerFingerprint },
     /// List exported devices on a paired server
-    Devices { fingerprint: PeerFingerprint },
+    Devices {
+        /// Paired server fingerprint; defaults to the latest saved session.
+        #[arg(long)]
+        fingerprint: Option<PeerFingerprint>,
+    },
     /// Attach a remote USB device
     Attach {
-        fingerprint: PeerFingerprint,
         device_id: u32,
+        /// Paired server fingerprint; defaults to the latest saved session.
+        #[arg(long)]
+        fingerprint: Option<PeerFingerprint>,
         /// Loopback address exposed to the local USB/IP driver.
         #[arg(
             long,
@@ -44,8 +50,10 @@ pub enum Command {
     },
     /// Detach a remote USB device
     Detach {
-        fingerprint: PeerFingerprint,
         device_id: u32,
+        /// Paired server fingerprint; defaults to the latest saved session.
+        #[arg(long)]
+        fingerprint: Option<PeerFingerprint>,
     },
     /// Run connectivity and security diagnostics
     Diagnose { fingerprint: PeerFingerprint },

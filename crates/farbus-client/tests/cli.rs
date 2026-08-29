@@ -17,25 +17,40 @@ fn pairing_pin_is_not_accepted_on_command_line() {
 
 #[test]
 fn parses_attach_with_numeric_device_id() {
-    let fingerprint = "01".repeat(32);
-    let cli = Cli::try_parse_from(["farbus", "attach", &fingerprint, "42"]).unwrap();
+    let cli = Cli::try_parse_from(["farbus", "attach", "42"]).unwrap();
     assert!(matches!(
         cli.command,
         Command::Attach {
+            fingerprint: None,
             device_id: 42,
             usbip_listen,
-            ..
         } if usbip_listen.to_string() == "127.0.0.1:3240"
     ));
 }
 
 #[test]
+fn parses_devices_and_detach_without_fingerprint() {
+    let cli = Cli::try_parse_from(["farbus", "devices"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        Command::Devices { fingerprint: None }
+    ));
+
+    let cli = Cli::try_parse_from(["farbus", "detach", "42"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        Command::Detach {
+            fingerprint: None,
+            device_id: 42,
+        }
+    ));
+}
+
+#[test]
 fn parses_custom_usbip_listen_address() {
-    let fingerprint = "01".repeat(32);
     let cli = Cli::try_parse_from([
         "farbus",
         "attach",
-        &fingerprint,
         "42",
         "--usbip-listen",
         "127.0.0.1:33240",
@@ -50,32 +65,15 @@ fn parses_custom_usbip_listen_address() {
 
 #[test]
 fn rejects_non_loopback_usbip_listener() {
-    let fingerprint = "01".repeat(32);
     for addr in ["0.0.0.0:3240", "[::]:3240", "192.168.1.10:3240"] {
-        assert!(Cli::try_parse_from([
-            "farbus",
-            "attach",
-            &fingerprint,
-            "42",
-            "--usbip-listen",
-            addr,
-        ])
-        .is_err());
+        assert!(Cli::try_parse_from(["farbus", "attach", "42", "--usbip-listen", addr,]).is_err());
     }
 }
 
 #[test]
 fn accepts_ipv6_loopback_usbip_listener() {
-    let fingerprint = "01".repeat(32);
-    let cli = Cli::try_parse_from([
-        "farbus",
-        "attach",
-        &fingerprint,
-        "42",
-        "--usbip-listen",
-        "[::1]:3240",
-    ])
-    .unwrap();
+    let cli =
+        Cli::try_parse_from(["farbus", "attach", "42", "--usbip-listen", "[::1]:3240"]).unwrap();
     assert!(matches!(
         cli.command,
         Command::Attach { usbip_listen, .. } if usbip_listen.ip().is_loopback()

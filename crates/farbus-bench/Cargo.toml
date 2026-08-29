@@ -13,6 +13,7 @@ farbus-protocol = { path = "../farbus-protocol" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+futures = "0.3"
 
 [lints]
 workspace = true

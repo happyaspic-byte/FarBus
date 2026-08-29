@@ -175,6 +175,7 @@ async fn full_tls_handshake_pairing_and_urb_roundtrip() {
             device_id: DeviceId(1),
             endpoint: 0,
             transfer: TransferType::Control,
+            requested_length: 18,
             data: vec![0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00],
         }),
     )

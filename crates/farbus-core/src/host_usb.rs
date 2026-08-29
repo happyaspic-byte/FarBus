@@ -202,7 +202,8 @@ fn bulk<T: UsbContext>(
     timeout: Duration,
 ) -> UrbComplete {
     if submit.endpoint & 0x80 != 0 {
-        let mut buf = vec![0u8; submit.data.len().clamp(1, 65_536)];
+        let requested = usize::try_from(submit.requested_length).unwrap_or(65_536);
+        let mut buf = vec![0u8; requested.clamp(1, 65_536)];
         match handle.read_bulk(submit.endpoint, &mut buf, timeout) {
             Ok(n) => UrbComplete {
                 seq: submit.seq,
@@ -237,7 +238,8 @@ fn interrupt<T: UsbContext>(
     timeout: Duration,
 ) -> UrbComplete {
     if submit.endpoint & 0x80 != 0 {
-        let mut buf = vec![0u8; 64];
+        let requested = usize::try_from(submit.requested_length).unwrap_or(65_536);
+        let mut buf = vec![0u8; requested.clamp(1, 65_536)];
         match handle.read_interrupt(submit.endpoint, &mut buf, timeout) {
             Ok(n) => UrbComplete {
                 seq: submit.seq,

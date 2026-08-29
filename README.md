@@ -12,8 +12,8 @@ Secure, high-performance open-source USB sharing over IPv6 and IPv4.
 - **Lease State Machine:** Exclusive, reentrant device leasing with owner-only release protection.
 - **Linux USB Inventory & Hotplug:** Polls libusb/sysfs using stable physical topology paths, preserves in-process device IDs across scan ordering, and revokes leases when a device disappears. Emulated devices are confined to tests and benchmarks.
 - **USB/IP 1.1 Wire Codec:** Big-endian parser and encoder for `OP_REQ_DEVLIST`, `OP_REP_DEVLIST`, `OP_REQ_IMPORT`, `OP_REP_IMPORT`, `USBIP_CMD_SUBMIT`/`USBIP_RET_SUBMIT`, and `USBIP_CMD_UNLINK`/`USBIP_RET_UNLINK` (Linux `usbip-host`, Windows `usbip-win2`).
-- **Pipelined URBs:** Multiple in-flight submits complete out of order over one TLS session; the loopback USB/IP proxy and FarBus client share that path.
-- **Loopback USB/IP Proxy:** Binds to `127.0.0.1:3240` so standard Windows/Linux USB/IP clients connect locally without exposing raw plaintext traffic over the physical network.
+- **Pipelined URBs:** Protocol v2 carries an explicit `requested_length`, so bulk/interrupt IN submits do not send a zero-filled TLS payload. Multiple in-flight submits complete out of order over one TLS session.
+- **Loopback USB/IP Proxy:** Binds to `127.0.0.1:3240` so standard Windows/Linux USB/IP clients connect locally without exposing raw plaintext traffic over the physical network. Dropped TLS sessions reconnect, reattach the same lease, and retry the failed URB once.
 - **Reproducible Benchmarks:** `farbus-bench` harness measuring URB latency, bulk throughput, and reconnect cycles.
 - **Dual-Stack Pathing:** Happy Eyeballs address interleave prioritizing IPv6 while retaining IPv4 fallback.
 - **Authenticated Data Plane:** Device list, attach, detach, and URB require a verified token bound to the TLS session. Hello fingerprints alone cannot list or steal a lease.
@@ -57,11 +57,14 @@ cargo run --release -p farbus-client -- --connect 192.168.1.100:7420 pair <serve
 ### 3. List and Attach Remote Devices
 
 ```bash
-# List devices exported by the server
-cargo run --release -p farbus-client -- devices <server-fingerprint>
+# Uses the most recently paired session
+farbus devices
 
-# Attach device #1
-cargo run --release -p farbus-client -- attach <server-fingerprint> 1
+# Attach device #1 and keep the local USB/IP proxy running
+farbus attach 1
+
+# Release device #1 from another terminal
+farbus detach 1
 ```
 
 Windows setup, including the unsigned per-user FarBus ZIP installer and separately installed usbip-win2 driver, is documented in [`docs/WINDOWS.md`](docs/WINDOWS.md). HID devices can inject input; export them only when you trust the client.
@@ -84,17 +87,17 @@ Run the built-in benchmark harness:
 # Control transfer latency (1,000 rounds)
 cargo run --release -p farbus-bench -- --scenario control-latency
 
-# Bulk transfer throughput
-cargo run --release -p farbus-bench -- --scenario bulk-throughput
+# Bulk transfer throughput (depth 64 pipeline)
+cargo run --release -p farbus-bench -- --scenario bulk-throughput --depth 64
 
 # Disconnect and reconnect speed (50 cycles)
 cargo run --release -p farbus-bench -- --scenario reconnect
 ```
 
 Measured on this workspace (loopback TLS 1.3, release, emulated devices — not physical USB):
-- **URB Control RTT:** 0.155 ms (6,457 ops/s, 1,000 rounds)
-- **Bulk OUT:** 68.87 MB/s (16 KiB × 1,000)
-- **Reconnect Time:** 1.66 ms per TLS reconnect cycle (50 cycles)
+- **URB Control RTT:** 0.197 ms (5,080 ops/s, 1,000 rounds)
+- **Bulk OUT:** 125.22 MB/s (16 KiB × 1,000, pipeline depth 64)
+- **Reconnect Time:** 1.56 ms per TLS reconnect cycle (50 cycles)
 
 ## Workspace Structure
 

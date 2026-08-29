@@ -1,12 +1,13 @@
-use crate::client::FarBusClient;
+use crate::client::{ClientError, FarBusClient};
 use crate::usb::LocalDevice;
 use crate::usbip_proxy::encode_device_header;
 use farbus_protocol::usbip::{
     UsbipCmdSubmit, UsbipCmdUnlink, UsbipRetSubmit, UsbipRetUnlink, OP_REP_DEVLIST, OP_REP_IMPORT,
     OP_REQ_DEVLIST, OP_REQ_IMPORT, USBIP_CMD_SUBMIT, USBIP_CMD_UNLINK, USBIP_VERSION,
 };
-use farbus_protocol::{DeviceId, TransferType};
+use farbus_protocol::{DeviceId, TransferType, UrbComplete};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
@@ -161,6 +162,73 @@ enum OutgoingUsbip {
     Ret(Vec<u8>),
 }
 
+/// Submits one URB, reconnecting the TLS session, reattaching the device,
+/// and retrying exactly once when the connection drops mid-flight.
+///
+/// # Errors
+///
+/// Returns the final [`ClientError`] when recovery or the retried URB fails.
+pub async fn urb_with_recovery(
+    client: Arc<Mutex<FarBusClient>>,
+    device_id: DeviceId,
+    seq: u32,
+    endpoint: u8,
+    transfer: TransferType,
+    requested_length: u32,
+    data: Vec<u8>,
+) -> Result<UrbComplete, ClientError> {
+    let mut attempt = 0;
+    loop {
+        let farbus = client.lock().await.clone();
+        let result = farbus
+            .urb_with_length(
+                device_id,
+                seq,
+                endpoint,
+                transfer,
+                requested_length,
+                data.clone(),
+            )
+            .await;
+        match result {
+            Ok(complete) => return Ok(complete),
+            Err(ClientError::Closed | ClientError::Frame(_) | ClientError::Io(_))
+                if attempt == 0 =>
+            {
+                attempt += 1;
+                drop(farbus);
+                reconnect_and_reattach(&client, device_id).await?;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+async fn reconnect_and_reattach(
+    client: &Arc<Mutex<FarBusClient>>,
+    device_id: DeviceId,
+) -> Result<(), ClientError> {
+    let mut last_err = ClientError::Closed;
+    let mut backoff = Duration::from_millis(50);
+    for _ in 0..8 {
+        let result = {
+            let mut farbus = client.lock().await;
+            match farbus.reconnect().await {
+                Ok(()) => farbus.attach(device_id).await,
+                Err(err) => Err(err),
+            }
+        };
+        match result {
+            Ok(_) => return Ok(()),
+            Err(ClientError::AttachRejected) => return Err(ClientError::AttachRejected),
+            Err(err) => last_err = err,
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_millis(500));
+    }
+    Err(last_err)
+}
+
 #[allow(clippy::too_many_lines)]
 async fn forward_urbs(
     stream: TcpStream,
@@ -229,7 +297,7 @@ async fn forward_urbs(
                 break;
             }
         }
-        let data = farbus_protocol::usbip::urb_submit_data(
+        let (data, requested_length) = farbus_protocol::usbip::urb_submit_data(
             cmd.ep,
             cmd.direction,
             cmd.setup,
@@ -240,21 +308,21 @@ async fn forward_urbs(
         let client = Arc::clone(client);
         let out_tx = out_tx.clone();
         tokio::spawn(async move {
-            let farbus = client.lock().await.clone();
-            let complete = farbus
-                .urb(
-                    device_id,
-                    cmd.seqnum,
-                    u8::try_from(cmd.ep).unwrap_or(0),
-                    transfer,
-                    data,
-                )
-                .await
-                .unwrap_or_else(|_| farbus_protocol::UrbComplete {
-                    seq: cmd.seqnum,
-                    status: -1,
-                    data: Vec::new(),
-                });
+            let complete = urb_with_recovery(
+                client,
+                device_id,
+                cmd.seqnum,
+                u8::try_from(cmd.ep).unwrap_or(0),
+                transfer,
+                requested_length,
+                data,
+            )
+            .await
+            .unwrap_or_else(|_| UrbComplete {
+                seq: cmd.seqnum,
+                status: -1,
+                data: Vec::new(),
+            });
             let ret = UsbipRetSubmit {
                 seqnum: cmd.seqnum,
                 devid: cmd.devid,
