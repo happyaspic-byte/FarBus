@@ -43,6 +43,45 @@ fn scan_lists_discovered_servers() {
 }
 
 #[test]
+fn manual_tailscale_host_is_selected_without_scan() {
+    let mut state = GuiState::new();
+    apply(
+        &mut state,
+        GuiEvent::ManualHostChanged("100.95.152.106:7420".into()),
+    );
+    apply(
+        &mut state,
+        GuiEvent::ManualFingerprintChanged("aa".repeat(32)),
+    );
+    apply(&mut state, GuiEvent::ManualServerAdded);
+    assert_eq!(state.servers.len(), 1);
+    assert_eq!(
+        state.servers[0].addr,
+        "100.95.152.106:7420".parse().unwrap()
+    );
+    assert_eq!(state.selected, Some(state.servers[0].fingerprint));
+    assert_eq!(state.phase, GuiPhase::Idle);
+}
+
+#[test]
+fn parse_manual_ip_defaults_to_7420() {
+    let server = farbus_gui::parse_manual_server("127.0.0.1", &"ab".repeat(32)).unwrap();
+    assert_eq!(server.addr, "127.0.0.1:7420".parse().unwrap());
+}
+
+#[test]
+fn manual_server_rejects_bad_address() {
+    let mut state = GuiState::new();
+    apply(
+        &mut state,
+        GuiEvent::ManualHostChanged("not-an-addr".into()),
+    );
+    apply(&mut state, GuiEvent::ManualServerAdded);
+    assert!(state.servers.is_empty());
+    assert!(matches!(state.phase, GuiPhase::Error(_)));
+}
+
+#[test]
 fn pin_keeps_six_digits_and_never_enters_status() {
     let mut state = GuiState::new();
     apply(&mut state, GuiEvent::PinChanged("12ab34-56".into()));

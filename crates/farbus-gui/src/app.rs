@@ -252,6 +252,39 @@ impl eframe::App for FarBusApp {
                     ui.spinner();
                 }
             });
+            ui.label(
+                RichText::new(
+                    "LAN scan uses UDP broadcast and does not cross Tailscale. Add the server by name or IP instead.",
+                )
+                .weak(),
+            );
+            ui.horizontal(|ui| {
+                let mut host = self.state.manual_host.clone();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut host)
+                            .hint_text("ubuntu or 100.x.x.x:7420")
+                            .desired_width(220.0),
+                    )
+                    .changed()
+                {
+                    apply(&mut self.state, GuiEvent::ManualHostChanged(host));
+                }
+                let mut fp = self.state.manual_fingerprint.clone();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut fp)
+                            .hint_text("64-hex fingerprint")
+                            .desired_width(180.0),
+                    )
+                    .changed()
+                {
+                    apply(&mut self.state, GuiEvent::ManualFingerprintChanged(fp));
+                }
+                if ui.button("Add server").clicked() {
+                    apply(&mut self.state, GuiEvent::ManualServerAdded);
+                }
+            });
             ui.add_space(8.0);
             ui.label("Servers");
             egui::ScrollArea::vertical()
