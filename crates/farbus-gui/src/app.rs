@@ -65,15 +65,16 @@ impl FarBusApp {
             .with_menu(Box::new(menu))
             .build()
             .ok();
+        let last_visible = state.window_visible;
 
         Self {
             state,
             runtime,
             events,
             events_tx,
+            last_visible,
             attach_stop: None,
             attach_task: None,
-            last_visible: state.window_visible,
             _tray: tray,
             show_item,
             hide_item,
