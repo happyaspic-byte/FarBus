@@ -215,10 +215,14 @@ fn rejects_non_loopback_usbip_listen() {
 #[test]
 fn tray_hide_and_show_toggle_window() {
     let mut state = GuiState::new();
+    assert!(!state.take_focus_request());
     apply(&mut state, GuiEvent::TrayHidden);
     assert!(!state.window_visible);
+    assert!(!state.take_focus_request());
     apply(&mut state, GuiEvent::TrayShown);
     assert!(state.window_visible);
+    assert!(state.take_focus_request());
+    assert!(!state.take_focus_request());
 }
 
 #[test]

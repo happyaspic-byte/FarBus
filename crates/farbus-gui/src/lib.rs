@@ -84,6 +84,7 @@ pub struct GuiState {
     pub manual_fingerprint: String,
     pub usbip_listen: SocketAddr,
     pub window_visible: bool,
+    focus_requested: bool,
 }
 
 impl fmt::Debug for GuiState {
@@ -99,6 +100,7 @@ impl fmt::Debug for GuiState {
             .field("manual_fingerprint", &self.manual_fingerprint)
             .field("usbip_listen", &self.usbip_listen)
             .field("window_visible", &self.window_visible)
+            .field("focus_requested", &self.focus_requested)
             .finish()
     }
 }
@@ -117,6 +119,7 @@ impl GuiState {
             manual_fingerprint: String::new(),
             usbip_listen: DEFAULT_USBIP,
             window_visible: true,
+            focus_requested: false,
         }
     }
 
@@ -130,6 +133,13 @@ impl GuiState {
             GuiPhase::Forwarding => format!("Forwarding · {}", self.usbip_listen),
             GuiPhase::Error(err) => err.clone(),
         }
+    }
+
+    #[must_use]
+    pub fn take_focus_request(&mut self) -> bool {
+        let requested = self.focus_requested;
+        self.focus_requested = false;
+        requested
     }
 }
 
@@ -320,9 +330,11 @@ pub fn apply(state: &mut GuiState, event: GuiEvent) {
         }
         GuiEvent::TrayHidden => {
             state.window_visible = false;
+            state.focus_requested = false;
         }
         GuiEvent::TrayShown => {
             state.window_visible = true;
+            state.focus_requested = true;
         }
     }
 }

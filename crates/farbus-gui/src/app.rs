@@ -19,6 +19,7 @@ struct FarBusApp {
     events_tx: mpsc::Sender<GuiEvent>,
     attach_stop: Option<oneshot::Sender<()>>,
     attach_task: Option<JoinHandle<()>>,
+    last_visible: bool,
     _tray: Option<TrayIcon>,
     show_item: MenuItem,
     hide_item: MenuItem,
@@ -72,6 +73,7 @@ impl FarBusApp {
             events_tx,
             attach_stop: None,
             attach_task: None,
+            last_visible: state.window_visible,
             _tray: tray,
             show_item,
             hide_item,
@@ -95,8 +97,11 @@ impl FarBusApp {
         while TrayIconEvent::receiver().try_recv().is_ok() {
             apply(&mut self.state, GuiEvent::TrayShown);
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.state.window_visible));
-        if self.state.window_visible {
+        if self.last_visible != self.state.window_visible {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.state.window_visible));
+            self.last_visible = self.state.window_visible;
+        }
+        if self.state.take_focus_request() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
     }
@@ -300,7 +305,7 @@ impl eframe::App for FarBusApp {
                 if ui
                     .add(
                         egui::TextEdit::singleline(&mut fp)
-                            .hint_text("64-hex fingerprint")
+                            .hint_text("optional fingerprint")
                             .desired_width(180.0),
                     )
                     .changed()
