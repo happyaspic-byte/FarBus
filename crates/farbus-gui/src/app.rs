@@ -165,8 +165,9 @@ impl FarBusApp {
                 Ok((bus_id, client, devices)) => {
                     let _ = tx.send(GuiEvent::AttachSucceeded { id, bus_id });
                     let shared = Arc::new(Mutex::new(client));
+                    let listen_addr = listen.to_string();
                     tokio::select! {
-                        _ = farbus_core::serve_usbip_forward(&listen.to_string(), devices, shared) => {}
+                        _ = farbus_core::serve_usbip_forward(&listen_addr, devices, shared) => {}
                         _ = stop_rx => {}
                     }
                 }
