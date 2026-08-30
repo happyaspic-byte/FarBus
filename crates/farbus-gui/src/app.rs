@@ -101,6 +101,28 @@ impl FarBusApp {
         }
     }
 
+    fn add_manual(&self) {
+        let host = self.state.manual_host.clone();
+        let fingerprint = self.state.manual_fingerprint.clone();
+        let tx = self.events_tx.clone();
+        if !fingerprint.is_empty() {
+            apply_owned(&tx, GuiEvent::ManualServerAdded);
+            return;
+        }
+        let runtime = Arc::clone(&self.runtime);
+        thread::spawn(
+            move || match runtime.block_on(actions::probe_server(&host)) {
+                Ok(server) => {
+                    let _ = tx.send(GuiEvent::ServersFound(vec![server.clone()]));
+                    let _ = tx.send(GuiEvent::ServerSelected(server.fingerprint));
+                }
+                Err(err) => {
+                    let _ = tx.send(GuiEvent::Failed(err));
+                }
+            },
+        );
+    }
+
     fn scan(&self) {
         let tx = self.events_tx.clone();
         let _ = tx.send(GuiEvent::ScanStarted);
@@ -220,6 +242,10 @@ fn spawn_load(
     );
 }
 
+fn apply_owned(tx: &std::sync::mpsc::Sender<GuiEvent>, event: GuiEvent) {
+    let _ = tx.send(event);
+}
+
 fn short_fp(fp: &farbus_core::PeerFingerprint) -> String {
     let text = fp.to_string();
     format!("{}…{}", &text[..8], &text[text.len() - 8..])
@@ -254,7 +280,7 @@ impl eframe::App for FarBusApp {
             });
             ui.label(
                 RichText::new(
-                    "LAN scan uses UDP broadcast and does not cross Tailscale. Add the server by name or IP instead.",
+                    "LAN scan stays on the local broadcast domain. Over Tailscale, add ubuntu or 100.x.x.x:7420 — the GUI reads the fingerprint from TLS.",
                 )
                 .weak(),
             );
@@ -282,7 +308,7 @@ impl eframe::App for FarBusApp {
                     apply(&mut self.state, GuiEvent::ManualFingerprintChanged(fp));
                 }
                 if ui.button("Add server").clicked() {
-                    apply(&mut self.state, GuiEvent::ManualServerAdded);
+                    self.add_manual();
                 }
             });
             ui.add_space(8.0);
@@ -293,7 +319,7 @@ impl eframe::App for FarBusApp {
                     if self.state.servers.is_empty() {
                         ui.label(
                             RichText::new(
-                                "No servers yet. Scan the LAN or pair from a saved session.",
+                                "No servers yet. Scan the LAN, or add a Tailscale host.",
                             )
                             .weak(),
                         );

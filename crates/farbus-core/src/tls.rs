@@ -6,7 +6,7 @@ use rustls::{
     ClientConfig, DigitallySignedStruct, Error as RustlsError, ServerConfig, SignatureScheme,
 };
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use thiserror::Error as ThisError;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
@@ -115,6 +115,75 @@ impl ServerCertVerifier for PinnedServerVerifier {
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.supported_algs.supported_schemes()
     }
+}
+
+#[derive(Debug)]
+struct ObservingServerVerifier {
+    seen: Arc<Mutex<Option<PeerFingerprint>>>,
+    supported_algs: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl ServerCertVerifier for ObservingServerVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, RustlsError> {
+        if let Ok(mut seen) = self.seen.lock() {
+            *seen = Some(fingerprint_cert(end_entity.as_ref()));
+        }
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported_algs)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported_algs)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.supported_algs.supported_schemes()
+    }
+}
+
+/// Builds a client TLS connector that records the server certificate fingerprint.
+///
+/// Pairing still requires the PIN. Use this only to learn the pin-target identity.
+///
+/// # Errors
+///
+/// Returns [`TlsError`] on configuration error.
+type ObservedFingerprint = Arc<Mutex<Option<PeerFingerprint>>>;
+
+#[allow(clippy::type_complexity)]
+pub fn make_observing_client_config() -> Result<(TlsConnector, ObservedFingerprint), TlsError> {
+    let supported_algs = rustls::crypto::ring::default_provider().signature_verification_algorithms;
+    let seen = Arc::new(Mutex::new(None));
+    let verifier = Arc::new(ObservingServerVerifier {
+        seen: Arc::clone(&seen),
+        supported_algs,
+    });
+    let mut cfg = ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    cfg.alpn_protocols = vec![b"farbus-v1".to_vec()];
+    Ok((TlsConnector::from(Arc::new(cfg)), seen))
 }
 
 /// Builds a client TLS connector that pins the server fingerprint.

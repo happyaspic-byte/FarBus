@@ -1,11 +1,13 @@
-use crate::{DiscoveredServer, GuiDevice, GuiSession};
+use crate::{parse_manual_server, DiscoveredServer, GuiDevice, GuiSession};
 use farbus_core::{
-    discovery, load_session, save_session, DeviceId, FarBusClient, Identity, PeerFingerprint,
-    StoredSession,
+    discovery, load_session, make_observing_client_config, save_session, DeviceId, FarBusClient,
+    Identity, PeerFingerprint, StoredSession,
 };
 use farbus_protocol::DeviceInfo;
+use rustls::pki_types::ServerName;
 use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::net::TcpStream;
 
 #[must_use]
 pub fn restore_session() -> Option<GuiSession> {
@@ -32,6 +34,35 @@ pub async fn scan_servers() -> Result<Vec<DiscoveredServer>, String> {
             fingerprint,
         })
         .collect())
+}
+
+/// Reads the server certificate fingerprint over TLS without pairing.
+///
+/// # Errors
+///
+/// Returns a display string when the host cannot be resolved or TLS fails.
+pub async fn probe_server(host: &str) -> Result<DiscoveredServer, String> {
+    let draft = parse_manual_server(host, "")?;
+    let (connector, seen) = make_observing_client_config().map_err(|err| err.to_string())?;
+    let tcp = TcpStream::connect(draft.addr)
+        .await
+        .map_err(|err| err.to_string())?;
+    let _ = tcp.set_nodelay(true);
+    let name = ServerName::try_from("farbus.local").map_err(|err| err.to_string())?;
+    let _tls = connector
+        .connect(name, tcp)
+        .await
+        .map_err(|err| err.to_string())?;
+    let fingerprint = seen
+        .lock()
+        .ok()
+        .and_then(|guard| *guard)
+        .ok_or_else(|| "server did not present a certificate".to_string())?;
+    Ok(DiscoveredServer {
+        hostname: draft.hostname,
+        addr: draft.addr,
+        fingerprint,
+    })
 }
 
 /// Pairs with a server using the PIN from the GUI field. The PIN is not persisted.

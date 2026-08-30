@@ -34,6 +34,40 @@ fn loopback_usbip_rejects_lan_addresses() {
 }
 
 #[tokio::test]
+async fn probe_reads_tls_certificate_fingerprint() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let (certs, key, server_fp) = make_self_signed("farbus.local").unwrap();
+    let acceptor = make_server_config(certs, key).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let state = Arc::new(ServerState::new(
+        "farbus-server".into(),
+        server_fp,
+        simulated_lab_devices(),
+    ));
+    let _server = tokio::spawn({
+        let state = Arc::clone(&state);
+        async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let acceptor = acceptor.clone();
+                let state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    if let Ok(mut tls) = acceptor.accept(stream).await {
+                        let _ = serve_session(&mut tls, state).await;
+                    }
+                });
+            }
+        }
+    });
+
+    let found = actions::probe_server(&addr.to_string())
+        .await
+        .expect("probe");
+    assert_eq!(found.fingerprint, server_fp);
+    assert_eq!(found.addr, addr);
+}
+
+#[tokio::test]
 async fn pair_rejects_short_pin_without_network() {
     let err = actions::pair_server(
         "127.0.0.1:7420".parse().unwrap(),

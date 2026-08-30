@@ -161,12 +161,13 @@ pub fn parse_manual_server(host: &str, fingerprint: &str) -> Result<DiscoveredSe
     }
     let addr = resolve_server_addr(host)?;
     let fingerprint = fingerprint.trim();
-    if fingerprint.is_empty() {
-        return Err("paste the 64-hex fingerprint from the Linux server".into());
-    }
-    let fingerprint = fingerprint
-        .parse()
-        .map_err(|_| "fingerprint must be 64 hex characters from the Linux server".to_string())?;
+    let fingerprint = if fingerprint.is_empty() {
+        PeerFingerprint::new([0; 32])
+    } else {
+        fingerprint.parse().map_err(|_| {
+            "fingerprint must be 64 hex characters from the Linux server".to_string()
+        })?
+    };
     Ok(DiscoveredServer {
         hostname: display_hostname(host),
         addr,
@@ -198,6 +199,20 @@ fn host_has_port(host: &str) -> bool {
     }
 }
 
+fn merge_servers(state: &mut GuiState, incoming: Vec<DiscoveredServer>) {
+    for server in incoming {
+        if let Some(existing) = state
+            .servers
+            .iter_mut()
+            .find(|existing| existing.fingerprint == server.fingerprint)
+        {
+            *existing = server;
+        } else {
+            state.servers.push(server);
+        }
+    }
+}
+
 fn display_hostname(host: &str) -> String {
     host.split([':', ']'])
         .find(|part| !part.is_empty() && part.chars().any(|ch| ch.is_ascii_alphabetic()))
@@ -212,7 +227,7 @@ pub fn apply(state: &mut GuiState, event: GuiEvent) {
             state.phase = GuiPhase::Scanning;
         }
         GuiEvent::ServersFound(servers) => {
-            state.servers = servers;
+            merge_servers(state, servers);
             if state.phase == GuiPhase::Scanning {
                 state.phase = GuiPhase::Idle;
             }

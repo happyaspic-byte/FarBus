@@ -37,7 +37,7 @@ On the Linux host, export only the intended bus IDs:
 farbus-server --export 1-1.2 --listen [::]:7420
 ```
 
-On Windows, run `farbus-gui.exe`. LAN Scan uses UDP broadcast and does not cross Tailscale. Over Tailscale, add `ubuntu:7420` or `100.x.x.x:7420` plus the 64-hex fingerprint from the Linux server, then enter the 6-digit PIN and Attach. The PIN field never appears on the CLI and is not written to disk.
+On Windows, run `farbus-gui.exe`. LAN Scan uses UDP broadcast and does not cross Tailscale. Over Tailscale, add `ubuntu` or `100.x.x.x:7420`; the GUI reads the server fingerprint from TLS, then enter the 6-digit PIN and Attach. The PIN field never appears on the CLI and is not written to disk.
 
 The CLI still works:
 

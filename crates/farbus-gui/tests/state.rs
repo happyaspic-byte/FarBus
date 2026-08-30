@@ -43,6 +43,47 @@ fn scan_lists_discovered_servers() {
 }
 
 #[test]
+fn empty_scan_keeps_manual_server() {
+    let mut state = GuiState::new();
+    apply(
+        &mut state,
+        GuiEvent::ManualHostChanged("100.95.152.106:7420".into()),
+    );
+    apply(
+        &mut state,
+        GuiEvent::ManualFingerprintChanged("aa".repeat(32)),
+    );
+    apply(&mut state, GuiEvent::ManualServerAdded);
+    apply(&mut state, GuiEvent::ScanStarted);
+    apply(&mut state, GuiEvent::ServersFound(Vec::new()));
+    assert_eq!(state.servers.len(), 1);
+    assert_eq!(state.phase, GuiPhase::Idle);
+}
+
+#[test]
+fn scan_merges_lan_and_manual_servers() {
+    let mut state = GuiState::new();
+    apply(
+        &mut state,
+        GuiEvent::ManualHostChanged("100.95.152.106:7420".into()),
+    );
+    apply(
+        &mut state,
+        GuiEvent::ManualFingerprintChanged("aa".repeat(32)),
+    );
+    apply(&mut state, GuiEvent::ManualServerAdded);
+    apply(
+        &mut state,
+        GuiEvent::ServersFound(vec![farbus_gui::DiscoveredServer {
+            hostname: "lab".into(),
+            addr: "192.168.1.20:7420".parse().unwrap(),
+            fingerprint: fp(7),
+        }]),
+    );
+    assert_eq!(state.servers.len(), 2);
+}
+
+#[test]
 fn manual_tailscale_host_is_selected_without_scan() {
     let mut state = GuiState::new();
     apply(
