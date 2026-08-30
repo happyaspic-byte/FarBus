@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 addr,
                 fingerprint,
                 auth_token: token,
+                client_secret: Some(client.identity_secret()),
             })?;
             println!("Paired with {fingerprint}. Token saved locally.");
         }
@@ -146,11 +147,21 @@ async fn connect_saved(
 ) -> Result<FarBusClient, Box<dyn std::error::Error>> {
     let saved = load_session(fingerprint).ok_or("run 'farbus pair' first")?;
     let addr = connect.unwrap_or(saved.addr);
-    Ok(farbus_core::connect_with_retry(
-        addr,
-        saved.fingerprint,
-        Some(saved.auth_token),
-        &farbus_core::ReconnectPolicy::default(),
-    )
-    .await?)
+    let client = if let Some(secret) = saved.client_secret {
+        FarBusClient::connect_with_identity(
+            addr,
+            saved.fingerprint,
+            farbus_core::Identity::from_secret(secret),
+        )
+        .await?
+    } else {
+        farbus_core::connect_with_retry(
+            addr,
+            saved.fingerprint,
+            None,
+            &farbus_core::ReconnectPolicy::default(),
+        )
+        .await?
+    };
+    Ok(client.with_auth_token(saved.auth_token))
 }

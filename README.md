@@ -22,7 +22,7 @@ Secure, high-performance open-source USB sharing over IPv6 and IPv4.
 
 ## Quick Start
 
-Tagged releases publish SHA-256 checksummed Linux x86_64 and unsigned Windows x86_64 archives. The Windows archive contains user-space `farbus.exe` only; install the signed usbip-win2 driver separately.
+Tagged releases publish SHA-256 checksummed Linux x86_64 and unsigned Windows x86_64 archives. The Windows archive contains user-space `farbus.exe` and `farbus-gui.exe`; install the signed usbip-win2 driver separately.
 
 ### 1. Build and Run the Server (Linux/Pi)
 
@@ -67,7 +67,7 @@ farbus attach 1
 farbus detach 1
 ```
 
-Windows setup, including the unsigned per-user FarBus ZIP installer and separately installed usbip-win2 driver, is documented in [`docs/WINDOWS.md`](docs/WINDOWS.md). HID devices can inject input; export them only when you trust the client.
+On Windows, `farbus-gui.exe` scans the LAN, takes the 6-digit PIN from the Linux server terminal, and attaches devices. Setup, including the unsigned per-user ZIP and separately installed usbip-win2 driver, is documented in [`docs/WINDOWS.md`](docs/WINDOWS.md). HID devices can inject input; export them only when you trust the client.
 
 ### 4. Connect with Standard USB/IP (Windows / Linux)
 
@@ -107,6 +107,7 @@ crates/
 ├── farbus-core/      # Identity, TLS 1.3, state machines, USB inventory, USB/IP proxy
 ├── farbus-server/    # Linux server binary with sysfs scanning & UDP discovery beacon
 ├── farbus-client/    # Cross-platform CLI client with session persistence & pairing
+├── farbus-gui/       # Windows tray/window client (scan, PIN pair, attach)
 └── farbus-bench/     # Automated performance & latency measurement tool
 ```
 

@@ -48,7 +48,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist/FarBus-Windows-x64 | Out-Null
-          Copy-Item target/release/farbus.exe,scripts/install-windows.ps1,docs/WINDOWS.md,LICENSE-MIT,LICENSE-APACHE dist/FarBus-Windows-x64/
+          Copy-Item target/release/farbus.exe,target/release/farbus-gui.exe,scripts/install-windows.ps1,docs/WINDOWS.md,LICENSE-MIT,LICENSE-APACHE dist/FarBus-Windows-x64/
           Compress-Archive -Path dist/FarBus-Windows-x64/* -DestinationPath dist/FarBus-Windows-x64-unsigned.zip
       - uses: actions/upload-artifact@v4
         with:

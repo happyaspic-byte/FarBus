@@ -12,13 +12,13 @@ FarBus does not ship a Windows kernel driver. Use a signed USB/IP 1.1 client suc
 powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
 ```
 
-The package installs `farbus.exe` per user under `%LOCALAPPDATA%\Programs\FarBus` and adds that directory to the user PATH. The package is not Authenticode-signed, does not install a kernel driver, and does not register a Windows service.
+The package installs `farbus.exe` and `farbus-gui.exe` per user under `%LOCALAPPDATA%\Programs\FarBus` and adds that directory to the user PATH. The package is not Authenticode-signed, does not install a kernel driver, and does not register a Windows service.
 
 Source builds can pass a binary explicitly:
 
 ```powershell
-cargo build --release -p farbus-client
-.\scripts\install-windows.ps1 -Binary .\target\release\farbus.exe
+cargo build --release -p farbus-client -p farbus-gui
+.\scripts\install-windows.ps1 -Binary .\target\release\farbus.exe -GuiBinary .\target\release\farbus-gui.exe
 ```
 
 Uninstall without deleting pairing sessions:
@@ -37,7 +37,9 @@ On the Linux host, export only the intended bus IDs:
 farbus-server --export 1-1.2 --listen [::]:7420
 ```
 
-On Windows:
+On Windows, run `farbus-gui.exe`. Scan the LAN, enter the 6-digit PIN from the Linux server terminal, then Attach. The PIN field never appears on the CLI and is not written to disk.
+
+The CLI still works:
 
 ```powershell
 farbus discover
@@ -46,7 +48,7 @@ farbus devices
 farbus attach 1
 ```
 
-Leave `farbus attach` running in the foreground. It opens a plaintext USB/IP listener only on a loopback address; non-loopback `--usbip-listen` values are rejected.
+Leave Attach running (GUI or `farbus attach`). It opens a plaintext USB/IP listener only on a loopback address; non-loopback listeners are rejected.
 
 Then attach with usbip-win2:
 

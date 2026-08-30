@@ -6,6 +6,7 @@ members = [
     "crates/farbus-server",
     "crates/farbus-client",
     "crates/farbus-bench",
+    "crates/farbus-gui",
 ]
 
 [workspace.package]

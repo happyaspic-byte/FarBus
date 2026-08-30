@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist/FarBus-Windows-x64 | Out-Null
-          Copy-Item target/release/farbus.exe,scripts/install-windows.ps1,docs/WINDOWS.md,README.md,LICENSE-MIT,LICENSE-APACHE dist/FarBus-Windows-x64/
+          Copy-Item target/release/farbus.exe,target/release/farbus-gui.exe,scripts/install-windows.ps1,docs/WINDOWS.md,README.md,LICENSE-MIT,LICENSE-APACHE dist/FarBus-Windows-x64/
           & dist/FarBus-Windows-x64/farbus.exe --help | Out-Null
           Compress-Archive -Path dist/FarBus-Windows-x64/* -DestinationPath dist/FarBus-Windows-x64-unsigned.zip
           (Get-FileHash dist/FarBus-Windows-x64-unsigned.zip -Algorithm SHA256).Hash.ToLower() + "  FarBus-Windows-x64-unsigned.zip" | Set-Content -NoNewline dist/FarBus-Windows-x64-unsigned.zip.sha256

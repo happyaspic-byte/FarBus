@@ -1,0 +1,29 @@
+[package]
+name = "farbus-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "FarBus Windows client GUI"
+
+[[bin]]
+name = "farbus-gui"
+path = "src/main.rs"
+
+[dependencies]
+farbus-core = { path = "../farbus-core" }
+farbus-protocol = { path = "../farbus-protocol" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[target.'cfg(windows)'.dependencies]
+eframe = "0.29"
+egui = "0.29"
+tray-icon = "0.19"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
+
+[lints]
+workspace = true

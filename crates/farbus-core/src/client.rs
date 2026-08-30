@@ -74,6 +74,19 @@ impl FarBusClient {
     ///
     /// Returns I/O or TLS errors when the handshake fails.
     pub async fn connect(addr: SocketAddr, expected: PeerFingerprint) -> Result<Self, ClientError> {
+        Self::connect_with_identity(addr, expected, Identity::generate()).await
+    }
+
+    /// Connects with a previously issued client identity so a saved token stays valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns I/O or TLS errors when the handshake fails.
+    pub async fn connect_with_identity(
+        addr: SocketAddr,
+        expected: PeerFingerprint,
+        identity: Identity,
+    ) -> Result<Self, ClientError> {
         let connector = make_pinned_client_config(expected).map_err(|_| ClientError::Tls)?;
         let tcp = TcpStream::connect(addr).await?;
         let _ = tcp.set_nodelay(true);
@@ -82,7 +95,6 @@ impl FarBusClient {
             .connect(name, tcp)
             .await
             .map_err(|_| ClientError::Tls)?;
-        let identity = Identity::generate();
         let client = Self::from_stream(stream, identity, None, addr, expected);
         client.hello().await?;
         Ok(client)
@@ -150,6 +162,11 @@ impl FarBusClient {
     #[must_use]
     pub fn auth_token(&self) -> Option<[u8; 32]> {
         self.auth_token
+    }
+
+    #[must_use]
+    pub fn identity_secret(&self) -> [u8; 32] {
+        self.identity.secret()
     }
 
     async fn send_cmd(&self, cmd: ClientCmd) -> Result<(), ClientError> {
